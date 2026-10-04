@@ -1,0 +1,6 @@
+.PHONY: run build test fmt vet
+run:   ; go run ./cmd/server
+build: ; go build -o bin/velora-server ./cmd/server
+test:  ; go test ./...
+fmt:   ; gofmt -l -w .
+vet:   ; go vet ./...
