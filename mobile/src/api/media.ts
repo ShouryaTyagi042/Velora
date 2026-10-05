@@ -15,6 +15,8 @@ export type Media = {
   addedAt: string; // RFC 3339 timestamp
 };
 
-export function listMedia(): Promise<Media[]> {
-  return getJSON<Media[]>("/api/media");
+export async function listMedia(kind?: MediaKind): Promise<Media[]> {
+  const query = kind ? `?kind=${kind}` : "";
+  const body = await getJSON<{ items: Media[] }>(`/api/media${query}`);
+  return body.items;
 }

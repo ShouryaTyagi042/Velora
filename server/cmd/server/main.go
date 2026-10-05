@@ -1,9 +1,14 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/ShouryaTyagi042/Velora/server/internal/api"
@@ -12,16 +17,61 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	addr := os.Getenv("VELORA_ADDR")
 	if addr == "" {
 		addr = ":8080"
 	}
 
 	repo := memstore.New(seed())
-	handler := api.NewHandler(repo)
 
-	log.Printf("velora-server listening on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, handler))
+	srv := &http.Server{
+		Handler: api.NewHandler(repo),
+		// A client that connects and sends nothing would otherwise hold a goroutine forever.
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		// No WriteTimeout: phase 4 streams videos that take far longer than any fixed limit.
+	}
+
+	// ctx is cancelled on Ctrl+C (SIGINT) or SIGTERM.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Bind first, so "address already in use" is reported before we claim to be listening.
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	log.Printf("velora-server listening on %s", ln.Addr())
+
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.Serve(ln) }()
+
+	select {
+	case err := <-serveErr:
+		return err
+	case <-ctx.Done():
+	}
+	stop() // a second Ctrl+C now kills the process immediately
+
+	// Shutdown stops accepting connections and waits for in-flight requests.
+	// Serve returns as soon as Shutdown starts, so main must wait here, not there.
+	log.Print("shutting down; waiting up to 10s for in-flight requests")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		return err
+	}
+	if err := <-serveErr; !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	log.Print("shut down cleanly")
+	return nil
 }
 
 // seed returns hardcoded records until phase 3's scanner reads them from disk.

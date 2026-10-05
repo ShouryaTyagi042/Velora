@@ -26,3 +26,8 @@ type Media struct {
 
 // ErrNotFound is returned when no media has the requested id.
 var ErrNotFound = errors.New("media: not found")
+
+// Valid reports whether k is a known kind.
+func (k Kind) Valid() bool {
+	return k == KindVideo || k == KindComic
+}
