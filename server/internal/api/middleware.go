@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"io"
 	"log"
 	"net/http"
 	"runtime/debug"
@@ -77,7 +78,7 @@ func Logging(next http.Handler) http.Handler {
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
-	bytes  int
+	bytes  int64
 }
 
 func (s *statusRecorder) WriteHeader(code int) {
@@ -92,6 +93,19 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 		s.status = http.StatusOK // a Write without WriteHeader means 200
 	}
 	n, err := s.ResponseWriter.Write(b)
+	s.bytes += int64(n)
+	return n, err
+}
+
+// ReadFrom keeps the fast path for sending files. http.ServeContent copies the file into w;
+// when w is the real ResponseWriter, that copy uses its ReadFrom, which can hand the file
+// to the kernel (sendfile) instead of copying it through user space. Wrapping w would hide
+// that method, so the recorder exposes it too and delegates.
+func (s *statusRecorder) ReadFrom(r io.Reader) (int64, error) {
+	if s.status == 0 {
+		s.status = http.StatusOK
+	}
+	n, err := io.Copy(s.ResponseWriter, r)
 	s.bytes += n
 	return n, err
 }

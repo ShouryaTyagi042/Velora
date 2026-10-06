@@ -40,14 +40,22 @@ func run() error {
 		return fmt.Errorf("VELORA_MEDIA_DIR %s is not a directory", mediaDir)
 	}
 
+	// An os.Root refuses to open anything outside mediaDir: no "..", no absolute paths,
+	// no symlinks pointing out. Both the scanner and the stream handler go through it.
+	root, err := os.OpenRoot(mediaDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+
 	repo := memstore.New(nil)
-	lib := &library{fsys: os.DirFS(mediaDir), store: repo}
+	lib := &library{fsys: root.FS(), store: repo}
 	if _, _, err := lib.Rescan(context.Background()); err != nil {
 		return fmt.Errorf("initial scan of %s: %w", mediaDir, err)
 	}
 
 	srv := &http.Server{
-		Handler: api.NewHandler(repo, lib),
+		Handler: api.NewHandler(repo, lib, root.FS()),
 		// A client that connects and sends nothing would otherwise hold a goroutine forever.
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,

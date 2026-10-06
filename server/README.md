@@ -60,6 +60,7 @@ Every response is JSON (`Content-Type: application/json; charset=utf-8`) and car
 | `GET /api/media?actor=<name>` | `200 {"items":[...]}` with that actor (exact match; combines with `kind`); an unknown actor gives `[]` | `400 validation` if empty or over 200 bytes |
 | `GET /api/media/{id}` | `200 Media` | `404 not_found` |
 | `GET /api/media/{id}/thumbnail` | | `501 not_implemented` (phase 9) |
+| `GET` or `HEAD /api/media/{id}/stream` | `200` whole video, or `206 Partial Content` for a `Range: bytes=…` request (seeking); `304` for a matching `If-Modified-Since`. `Content-Type` comes from the file's extension; `Accept-Ranges: bytes` on every response | `404 not_found` for an unknown id, a comic, or a file deleted since the last scan; `416` for a range past the end |
 | `POST /api/scan` | `200 {"found":6,"warnings":[...]}` after rescanning `VELORA_MEDIA_DIR`; blocks until done | `500 internal` if the folder can't be read |
 
 Any other method on a known path returns `405`. Unknown paths return the mux's plain-text `404`.
