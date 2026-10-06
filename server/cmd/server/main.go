@@ -3,17 +3,20 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/ShouryaTyagi042/Velora/server/internal/api"
-	"github.com/ShouryaTyagi042/Velora/server/internal/media"
 	"github.com/ShouryaTyagi042/Velora/server/internal/memstore"
+	"github.com/ShouryaTyagi042/Velora/server/internal/scanner"
 )
 
 func main() {
@@ -27,11 +30,24 @@ func run() error {
 	if addr == "" {
 		addr = ":8080"
 	}
+	mediaDir := os.Getenv("VELORA_MEDIA_DIR")
+	if mediaDir == "" {
+		return errors.New("VELORA_MEDIA_DIR is not set: point it at the folder holding movies/ and comics/")
+	}
+	if info, err := os.Stat(mediaDir); err != nil {
+		return err
+	} else if !info.IsDir() {
+		return fmt.Errorf("VELORA_MEDIA_DIR %s is not a directory", mediaDir)
+	}
 
-	repo := memstore.New(seed())
+	repo := memstore.New(nil)
+	lib := &library{fsys: os.DirFS(mediaDir), store: repo}
+	if _, _, err := lib.Rescan(context.Background()); err != nil {
+		return fmt.Errorf("initial scan of %s: %w", mediaDir, err)
+	}
 
 	srv := &http.Server{
-		Handler: api.NewHandler(repo),
+		Handler: api.NewHandler(repo, lib),
 		// A client that connects and sends nothing would otherwise hold a goroutine forever.
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
@@ -74,13 +90,28 @@ func run() error {
 	return nil
 }
 
-// seed returns hardcoded records until phase 3's scanner reads them from disk.
-func seed() []media.Media {
-	added := time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)
-	return []media.Media{
-		{ID: "m1", Title: "The Matrix", Kind: media.KindVideo, Path: "/media/videos/the-matrix.mp4", SizeBytes: 2_147_483_648, AddedAt: added},
-		{ID: "m2", Title: "Interstellar", Kind: media.KindVideo, Path: "/media/videos/interstellar.mkv", SizeBytes: 4_831_838_208, AddedAt: added},
-		{ID: "m3", Title: "Saga Vol. 1", Kind: media.KindComic, Path: "/media/comics/saga-v1.cbz", SizeBytes: 157_286_400, AddedAt: added},
-		{ID: "m4", Title: "Watchmen", Kind: media.KindComic, Path: "/media/comics/watchmen.cbz", SizeBytes: 314_572_800, AddedAt: added},
+// library connects the scanner to the store. It satisfies api.Rescanner.
+type library struct {
+	fsys  fs.FS
+	store *memstore.Store
+	mu    sync.Mutex // one scan at a time; a second POST /api/scan waits for the first
+}
+
+// Rescan walks the library and swaps the store's contents for what it found.
+func (l *library) Rescan(ctx context.Context) (int, []string, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	start := time.Now()
+	res, err := scanner.Scan(ctx, l.fsys)
+	if err != nil {
+		return 0, nil, err
 	}
+	l.store.Replace(ctx, res.Items)
+
+	log.Printf("scan: %d items, %d warnings in %s", len(res.Items), len(res.Warnings), time.Since(start))
+	for _, w := range res.Warnings {
+		log.Printf("scan warning: %s", w)
+	}
+	return len(res.Items), res.Warnings, nil
 }

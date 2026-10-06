@@ -57,3 +57,32 @@ func TestListEmptyIsNotNil(t *testing.T) {
 		t.Error("List on empty store returned nil; JSON would be null instead of []")
 	}
 }
+
+func TestReplaceSwapsWholeLibrary(t *testing.T) {
+	s := New([]media.Media{{ID: "old", Title: "Gone"}})
+	s.Replace(context.Background(), []media.Media{{ID: "a", Title: "zebra"}, {ID: "b", Title: "Apple"}})
+
+	if _, err := s.Get(context.Background(), "old"); !errors.Is(err, media.ErrNotFound) {
+		t.Errorf("old item still present after Replace")
+	}
+	got, _ := s.List(context.Background())
+	if len(got) != 2 || got[0].Title != "Apple" || got[1].Title != "zebra" {
+		t.Errorf("List = %+v, want Apple then zebra (case-insensitive)", got)
+	}
+}
+
+func TestReplaceWhileReading(t *testing.T) {
+	// Run with -race: readers and a writer share the map only through the mutex.
+	s := New(nil)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 1000 {
+			s.Replace(context.Background(), []media.Media{{ID: "a", Title: "A"}})
+		}
+	}()
+	for range 1000 {
+		s.List(context.Background())
+	}
+	<-done
+}

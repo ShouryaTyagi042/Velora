@@ -2,8 +2,10 @@
 package memstore
 
 import (
+	"cmp"
 	"context"
-	"sort"
+	"slices"
+	"strings"
 	"sync"
 
 	"github.com/ShouryaTyagi042/Velora/server/internal/media"
@@ -25,16 +27,36 @@ func New(seed []media.Media) *Store {
 	return s
 }
 
-// List returns a copy of every item, sorted by title.
+// Replace swaps the whole library for items, e.g. after a rescan.
+// The new map is built before taking the lock, so readers wait only for the swap itself,
+// and they see either the old library or the new one, never a mix.
+func (s *Store) Replace(ctx context.Context, items []media.Media) {
+	next := make(map[string]media.Media, len(items))
+	for _, m := range items {
+		next[m.ID] = m
+	}
+
+	s.mu.Lock()
+	s.items = next
+	s.mu.Unlock()
+}
+
+// List returns a copy of every item, sorted by title (case-insensitive, then by id so
+// equal titles keep a stable order).
 func (s *Store) List(ctx context.Context) ([]media.Media, error) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	out := make([]media.Media, 0, len(s.items))
 	for _, m := range s.items {
 		out = append(out, m)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Title < out[j].Title })
+	s.mu.RUnlock()
+
+	slices.SortFunc(out, func(a, b media.Media) int {
+		return cmp.Or(
+			strings.Compare(strings.ToLower(a.Title), strings.ToLower(b.Title)),
+			strings.Compare(a.ID, b.ID),
+		)
+	})
 	return out, nil
 }
 

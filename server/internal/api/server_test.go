@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -23,9 +24,24 @@ func TestMain(m *testing.M) {
 
 func newTestHandler() http.Handler {
 	return NewHandler(memstore.New([]media.Media{
-		{ID: "v1", Title: "The Matrix", Kind: media.KindVideo, Path: "/secret/the-matrix.mp4"},
-		{ID: "c1", Title: "Watchmen", Kind: media.KindComic, Path: "/secret/watchmen.cbz"},
-	}))
+		{ID: "v1", Title: "The Matrix", Kind: media.KindVideo, RelPath: "movies/secret-dir/The Matrix.mp4",
+			Actors: []media.ActorTag{{Name: "Keanu Reeves", Source: media.ActorFromFolder}}},
+		{ID: "v2", Title: "Interstellar", Kind: media.KindVideo, RelPath: "movies/secret-dir/Interstellar.mp4",
+			Actors: []media.ActorTag{{Name: "Matthew McConaughey", Source: media.ActorFromFolder}}},
+		{ID: "c1", Title: "Watchmen", Kind: media.KindComic, RelPath: "comics/secret-dir/Watchmen",
+			Comic: &media.ComicMeta{PageCount: 2, Pages: []string{"secret-page-1.png", "secret-page-2.png"}}},
+	}), fakeRescanner{found: 3, warnings: nil})
+}
+
+// fakeRescanner stands in for the real scanner + store.
+type fakeRescanner struct {
+	found    int
+	warnings []string
+	err      error
+}
+
+func (f fakeRescanner) Rescan(ctx context.Context) (int, []string, error) {
+	return f.found, f.warnings, f.err
 }
 
 func TestEndpoints(t *testing.T) {
@@ -39,6 +55,10 @@ func TestEndpoints(t *testing.T) {
 		{"list all", "/api/media", 200, ""},
 		{"list videos", "/api/media?kind=video", 200, ""},
 		{"list bad kind", "/api/media?kind=audio", 400, "validation"},
+		{"list by actor", "/api/media?actor=Keanu%20Reeves", 200, ""},
+		{"list unknown actor", "/api/media?actor=Nobody", 200, ""},
+		{"list empty actor", "/api/media?actor=", 400, "validation"},
+		{"list huge actor", "/api/media?actor=" + strings.Repeat("a", 201), 400, "validation"},
 		{"get existing", "/api/media/v1", 200, ""},
 		{"get missing", "/api/media/nope", 404, "not_found"},
 		{"thumbnail stub", "/api/media/v1/thumbnail", 501, "not_implemented"},
@@ -76,19 +96,78 @@ func TestEndpoints(t *testing.T) {
 	}
 }
 
-func TestListFiltersByKindAndHidesPath(t *testing.T) {
-	rec := httptest.NewRecorder()
-	newTestHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/media?kind=video", nil))
+func TestListFilters(t *testing.T) {
+	tests := []struct {
+		query   string
+		wantIDs []string
+	}{
+		{"", []string{"v2", "v1", "c1"}}, // sorted by title: Interstellar, The Matrix, Watchmen
+		{"?kind=video", []string{"v2", "v1"}},
+		{"?kind=comic", []string{"c1"}},
+		{"?actor=Keanu%20Reeves", []string{"v1"}},
+		{"?actor=Keanu%20Reeves&kind=comic", []string{}},
+		{"?actor=keanu%20reeves", []string{}}, // exact match: case matters
+		{"?actor=Nobody", []string{}},
+	}
+	h := newTestHandler()
+	for _, tt := range tests {
+		t.Run(tt.query, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/media"+tt.query, nil))
 
-	var body listResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
+			var body listResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, m := range body.Items {
+				got = append(got, m.ID)
+			}
+			if body.Items == nil || !slices.Equal(got, tt.wantIDs) { // items must be [] (not null) even when empty
+				t.Errorf("ids = %v (items nil: %v), want %v", got, body.Items == nil, tt.wantIDs)
+			}
+		})
 	}
-	if len(body.Items) != 1 || body.Items[0].ID != "v1" {
-		t.Errorf("items = %+v, want only v1", body.Items)
+}
+
+func TestResponsesHideFilesystemDetails(t *testing.T) {
+	h := newTestHandler()
+	for _, path := range []string{"/api/media", "/api/media/v1", "/api/media/c1"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if body := rec.Body.String(); strings.Contains(body, "secret") {
+			t.Errorf("%s leaks a path or page filename: %s", path, body)
+		}
 	}
-	if strings.Contains(rec.Body.String(), "/secret/") {
-		t.Errorf("response leaks a filesystem path: %s", rec.Body)
+}
+
+func TestMediaJSONShape(t *testing.T) {
+	rec := httptest.NewRecorder()
+	newTestHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/media/v1", nil))
+	if !strings.Contains(rec.Body.String(), `"actors":[{"name":"Keanu Reeves","source":"folder"}]`) {
+		t.Errorf("video actors not in the expected shape: %s", rec.Body)
+	}
+
+	rec = httptest.NewRecorder()
+	newTestHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/media/c1", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, `"comic":{"pageCount":2}`) || strings.Contains(body, `"actors"`) {
+		t.Errorf("comic JSON wrong: %s", body)
+	}
+}
+
+func TestScanEndpoint(t *testing.T) {
+	rec := httptest.NewRecorder()
+	newTestHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/scan", nil))
+	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"found":3,"warnings":[]}` {
+		t.Errorf("got %d %s", rec.Code, rec.Body)
+	}
+
+	rec = httptest.NewRecorder()
+	NewHandler(failingRepo{}, fakeRescanner{err: errors.New("open /Users/x/media: permission denied")}).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/scan", nil))
+	if rec.Code != 500 || strings.Contains(rec.Body.String(), "/Users/") {
+		t.Errorf("scan failure: got %d %s, want a 500 that hides the path", rec.Code, rec.Body)
 	}
 }
 
@@ -105,7 +184,7 @@ func (failingRepo) Get(ctx context.Context, id string) (media.Media, error) {
 
 func TestInternalErrorsAreNotLeaked(t *testing.T) {
 	rec := httptest.NewRecorder()
-	NewHandler(failingRepo{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/media", nil))
+	NewHandler(failingRepo{}, fakeRescanner{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/media", nil))
 
 	if rec.Code != 500 {
 		t.Fatalf("status = %d, want 500", rec.Code)

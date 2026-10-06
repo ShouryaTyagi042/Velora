@@ -1,5 +1,5 @@
 .PHONY: run build test fmt vet
-run:   ; go run ./cmd/server
+run:   ; VELORA_MEDIA_DIR=$${VELORA_MEDIA_DIR:-$$HOME/velora-media} go run ./cmd/server
 build: ; go build -o bin/velora-server ./cmd/server
 test:  ; go test ./...
 fmt:   ; gofmt -l -w .
