@@ -1,6 +1,6 @@
 import { getJSON } from "./client";
 
-// Mirrors the Go media.Media JSON (server/internal/media/media.go).
+// Mirrors the Go media.Media JSON (server/internal/media/media.go), kept in sync by hand.
 // The server never sends filesystem paths or comic page filenames.
 // Enum values must match the Go constants exactly.
 export enum MediaKind {
@@ -30,12 +30,22 @@ export type Media = {
   comic?: { pageCount: number }; // comics only
 };
 
-export async function listMedia(filter: { kind?: MediaKind; actor?: string } = {}): Promise<Media[]> {
+export type ListOptions = { kind?: MediaKind; actor?: string; signal?: AbortSignal };
+
+export async function listMedia({ kind, actor, signal }: ListOptions = {}): Promise<Media[]> {
   const params = new URLSearchParams();
-  if (filter.kind) params.set("kind", filter.kind);
-  if (filter.actor) params.set("actor", filter.actor);
+  if (kind) params.set("kind", kind);
+  if (actor) params.set("actor", actor);
   const qs = params.toString(); // encodes spaces as "+", which Go's Query() decodes back
-  const query = qs ? `?${qs}` : "";
-  const body = await getJSON<{ items: Media[] }>(`/api/media${query}`);
+  const body = await getJSON<{ items: Media[] }>(`/api/media${qs ? `?${qs}` : ""}`, { signal });
   return body.items;
+}
+
+export function getMedia(id: string, { signal }: { signal?: AbortSignal } = {}): Promise<Media> {
+  return getJSON<Media>(`/api/media/${encodeURIComponent(id)}`, { signal });
+}
+
+// parseKind turns a route param back into a MediaKind; anything else means "all".
+export function parseKind(value: string | undefined): MediaKind | undefined {
+  return Object.values(MediaKind).find((k) => k === value);
 }

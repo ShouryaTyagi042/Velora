@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -55,7 +56,7 @@ func run() error {
 	}
 
 	srv := &http.Server{
-		Handler: api.NewHandler(repo, lib, root.FS()),
+		Handler: api.CORS(corsOrigins(), api.NewHandler(repo, lib, root.FS())),
 		// A client that connects and sends nothing would otherwise hold a goroutine forever.
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
@@ -96,6 +97,21 @@ func run() error {
 	}
 	log.Print("shut down cleanly")
 	return nil
+}
+
+// corsOrigins reads VELORA_CORS_ORIGINS, a comma-separated list of browser origins
+// allowed to call the API (e.g. http://localhost:8081 for Expo web). Empty: none.
+func corsOrigins() []string {
+	var origins []string
+	for _, o := range strings.Split(os.Getenv("VELORA_CORS_ORIGINS"), ",") {
+		if o = strings.TrimSpace(o); o != "" {
+			origins = append(origins, o)
+		}
+	}
+	if len(origins) > 0 {
+		log.Printf("CORS: browser pages at %s may call the API", strings.Join(origins, ", "))
+	}
+	return origins
 }
 
 // library connects the scanner to the store. It satisfies api.Rescanner.

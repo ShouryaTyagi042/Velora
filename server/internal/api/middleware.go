@@ -112,3 +112,41 @@ func (s *statusRecorder) ReadFrom(r io.Reader) (int64, error) {
 
 // Unwrap lets http.ResponseController reach the real writer (phase 4 needs Flush).
 func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
+// CORS lets browser pages at the given origins read API responses. Only browsers enforce
+// CORS: the phone app sends no Origin header and never needs this. It exists for testing
+// the app on the web (Expo web runs at http://localhost:8081, a different origin from the
+// API). An explicit list, never "*", so an arbitrary website can't read the library.
+// With no origins it changes nothing.
+func CORS(origins []string, next http.Handler) http.Handler {
+	allowed := make(map[string]bool, len(origins))
+	for _, o := range origins {
+		allowed[o] = true
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin == "" || len(allowed) == 0 {
+			next.ServeHTTP(w, r)
+			return
+		}
+		h := w.Header()
+		h.Add("Vary", "Origin") // the answer depends on Origin; caches must not mix them up
+		if allowed[origin] {
+			h.Set("Access-Control-Allow-Origin", origin)
+			// Without this, page JavaScript can't read these headers even when allowed.
+			h.Set("Access-Control-Expose-Headers", "X-Request-ID, Content-Range, Accept-Ranges")
+		}
+		// A preflight: the browser asks before sending a request it considers risky
+		// (a POST with a JSON body, a Range header). Answer it here; the routes only know GET/POST.
+		if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
+			if allowed[origin] {
+				h.Set("Access-Control-Allow-Methods", "GET, HEAD, POST")
+				h.Set("Access-Control-Allow-Headers", "Content-Type, Range")
+				h.Set("Access-Control-Max-Age", "600")
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}

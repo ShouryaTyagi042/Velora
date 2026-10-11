@@ -20,8 +20,9 @@ make fmt vet test
 |---|---|---|
 | `VELORA_ADDR` | `:8080` | Listen address. `:8080` binds every interface; `127.0.0.1:8080` would make it unreachable from the phone. |
 | `VELORA_MEDIA_DIR` | *(required)* | The library folder, holding `movies/` and `comics/` (below). The server won't start without it. |
+| `VELORA_CORS_ORIGINS` | *(none)* | Comma-separated browser origins allowed to call the API, e.g. `http://localhost:8081` for Expo web. Only browsers enforce CORS; the phone app doesn't need it. Never `*`. |
 
-`.env.example` documents the variables. Nothing loads `.env` automatically, so set them inline. `make run` defaults `VELORA_MEDIA_DIR` to `~/velora-media`; override it with `VELORA_MEDIA_DIR=/path make run`.
+`.env.example` documents the variables. Nothing loads `.env` automatically, so set them inline. `make run` defaults `VELORA_MEDIA_DIR` to `~/velora-media` and `VELORA_CORS_ORIGINS` to `http://localhost:8081`; override it with `VELORA_MEDIA_DIR=/path make run`.
 
 ## Library layout
 
