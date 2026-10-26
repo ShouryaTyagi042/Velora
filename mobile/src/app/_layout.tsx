@@ -11,6 +11,7 @@ export default function RootLayout() {
         <Stack.Screen name="index" options={{ title: "Velora" }} />
         <Stack.Screen name="library" options={{ title: "Library" }} />
         <Stack.Screen name="media/[id]" options={{ title: "" }} />
+        <Stack.Screen name="player/[id]" options={{ title: "" }} />
       </Stack>
     </ThemeProvider>
   );

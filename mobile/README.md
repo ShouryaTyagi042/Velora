@@ -1,6 +1,6 @@
 # velora-mobile
 
-The Expo / React Native client for Velora. In Phase 0 it has one screen that calls the server's `GET /health` and shows the result.
+The Expo / React Native client for Velora: browse the library (Home, Library, Details) and play videos from velora-server.
 
 ## Run
 
@@ -23,12 +23,26 @@ Run the server (`../server`, `make run`) first.
 ## Layout
 
 ```text
-src/app/_layout.tsx   root Stack navigator (expo-router)
-src/app/index.tsx     "/" (the health-check screen)
-src/api/client.ts     getJSON(): base URL + fetch + status check
+src/app/_layout.tsx       root Stack navigator (expo-router), light/dark theme
+src/app/index.tsx         "/": recently added, link to the library
+src/app/library.tsx       grid with kind and actor filters (in the URL)
+src/app/media/[id].tsx    details; Play opens the player
+src/app/player/[id].tsx   expo-video player with native controls
+src/api/                  getJSON, ApiError, Media types, streamUrl
+src/hooks/                useAsync (fetch state), usePlayerStatus (player events)
+src/components/           MediaCard, chips, Loading/Error/Empty views
 ```
 
 Files in `src/app/` are routes; anything else lives outside it.
+
+## Plain HTTP in production builds
+
+velora-server speaks `http://` on the LAN. Expo Go and development builds allow that, but a
+production build blocks cleartext HTTP by default (App Transport Security on iOS, the cleartext
+policy on Android), and the player and every API call fail. Before a release build, either put
+the server behind HTTPS or allow cleartext for the server's address in `app.json`
+(`ios.infoPlist.NSAppTransportSecurity`, Android `usesCleartextTraffic` via a config plugin).
+Never edit `ios/` or `android/` by hand. Phase 16 decides which.
 
 ## Reaching the server from the phone
 

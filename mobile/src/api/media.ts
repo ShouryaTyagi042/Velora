@@ -1,4 +1,4 @@
-import { getJSON } from "./client";
+import { baseUrl, getJSON } from "./client";
 
 // Mirrors the Go media.Media JSON (server/internal/media/media.go), kept in sync by hand.
 // The server never sends filesystem paths or comic page filenames.
@@ -48,4 +48,10 @@ export function getMedia(id: string, { signal }: { signal?: AbortSignal } = {}):
 // parseKind turns a route param back into a MediaKind; anything else means "all".
 export function parseKind(value: string | undefined): MediaKind | undefined {
   return Object.values(MediaKind).find((k) => k === value);
+}
+
+// streamUrl is what the native player fetches: GET /api/media/{id}/stream with Range headers.
+// The player opens its own connections, so this is a URL, not a getJSON call.
+export function streamUrl(id: string): string {
+  return `${baseUrl}/api/media/${encodeURIComponent(id)}/stream`;
 }

@@ -2,6 +2,7 @@ import { useTheme } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { ApiError, baseUrl } from "@/api/client";
+import { PlaybackError } from "@/hooks/usePlayerStatus";
 
 type Props = { error: Error; onRetry?: () => void };
 
@@ -27,6 +28,7 @@ function describe(error: Error): { title: string; detail: string } {
     if (error.status === 404) return { title: "Not found", detail: error.message };
     return { title: "The server had a problem", detail: `${error.message} (${error.code})` };
   }
+  if (error instanceof PlaybackError) return { title: "Can't play this video", detail: error.message };
   // fetch itself failed: no response at all.
   return {
     title: "Can't reach the server",
