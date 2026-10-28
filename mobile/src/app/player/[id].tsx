@@ -1,11 +1,12 @@
 import { Stack, useLocalSearchParams } from "expo-router";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { useCallback } from "react";
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { StyleSheet, Text, View } from "react-native";
 
 import { getMedia, MediaKind, streamUrl, type Media } from "@/api/media";
 import { ErrorView } from "@/components/ErrorView";
 import { Loading } from "@/components/Loading";
+import { PlayerControls } from "@/components/PlayerControls";
 import { useAsync } from "@/hooks/useAsync";
 import { PlaybackError, usePlayerStatus } from "@/hooks/usePlayerStatus";
 import { formatDuration } from "@/lib/format";
@@ -35,6 +36,16 @@ function Player({ media }: { media: Media }) {
     p.play();
   });
   const s = usePlayerStatus(player);
+  const videoRef = useRef<VideoView>(null);
+
+  // Fullscreen is the OS's player, and on iOS it keeps whatever nativeControls the inline view had:
+  // with them off, fullscreen has no controls at all. So turn them on first, enter fullscreen once
+  // that has rendered, and turn them off again on exit, when our glass controls are back.
+  const [fullscreen, setFullscreen] = useState(false);
+  useEffect(() => {
+    if (!fullscreen) return;
+    videoRef.current?.enterFullscreen().catch(() => setFullscreen(false));
+  }, [fullscreen]);
 
   const retry = () => {
     void player.replaceAsync(source).then(() => player.play());
@@ -48,13 +59,16 @@ function Player({ media }: { media: Media }) {
         <ErrorView error={s.error} onRetry={retry} />
       ) : (
         <View style={styles.videoBox}>
-          <VideoView player={player} style={styles.video} nativeControls fullscreenOptions={{ enable: true }} />
-          {s.buffering && (
-            // pointerEvents none: the spinner must not swallow taps meant for the controls.
-            <View style={styles.overlay} pointerEvents="none">
-              <ActivityIndicator size="large" color="#fff" />
-            </View>
-          )}
+          {/* Our glass controls inline; the OS's own controls in fullscreen. */}
+          <VideoView
+            ref={videoRef}
+            player={player}
+            style={styles.video}
+            nativeControls={fullscreen}
+            fullscreenOptions={{ enable: true }}
+            onFullscreenExit={() => setFullscreen(false)}
+          />
+          {!fullscreen && <PlayerControls player={player} status={s} onFullscreen={() => setFullscreen(true)} />}
         </View>
       )}
 
@@ -73,6 +87,5 @@ const styles = StyleSheet.create({
   screen: { flex: 1, justifyContent: "center" },
   videoBox: { width: "100%", aspectRatio: 16 / 9, backgroundColor: "#000" },
   video: { flex: 1 },
-  overlay: { ...StyleSheet.absoluteFill, alignItems: "center", justifyContent: "center" },
   debug: { color: "#888", fontSize: 12, textAlign: "center", padding: 12, fontVariant: ["tabular-nums"] },
 });

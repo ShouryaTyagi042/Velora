@@ -27,10 +27,10 @@ src/app/_layout.tsx       root Stack navigator (expo-router), light/dark theme
 src/app/index.tsx         "/": recently added, link to the library
 src/app/library.tsx       grid with kind and actor filters (in the URL)
 src/app/media/[id].tsx    details; Play opens the player
-src/app/player/[id].tsx   expo-video player with native controls
+src/app/player/[id].tsx   expo-video player with glass controls (native controls in fullscreen)
 src/api/                  getJSON, ApiError, Media types, streamUrl
-src/hooks/                useAsync (fetch state), usePlayerStatus (player events)
-src/components/           MediaCard, chips, Loading/Error/Empty views
+src/hooks/                useAsync (fetch state), usePlayerStatus (player events), useGlass
+src/components/           MediaCard, chips, Loading/Error/Empty views, Surface (glass or fallback), Icon, PlayerControls
 ```
 
 Files in `src/app/` are routes; anything else lives outside it.
