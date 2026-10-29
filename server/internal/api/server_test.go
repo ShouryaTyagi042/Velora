@@ -172,10 +172,11 @@ func TestScanEndpoint(t *testing.T) {
 	}
 }
 
-// failingRepo returns an error that must never reach the client.
-type failingRepo struct{}
+// failingRepo returns an error that must never reach the client. Methods it doesn't
+// override panic (nil embedded interface), which Recover turns into a 500.
+type failingRepo struct{ media.Repository }
 
-func (failingRepo) List(ctx context.Context) ([]media.Media, error) {
+func (failingRepo) List(ctx context.Context, f media.ListFilter) ([]media.Media, error) {
 	return nil, errors.New(`pq: relation "media" does not exist`)
 }
 

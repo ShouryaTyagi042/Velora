@@ -3,7 +3,7 @@ package api
 import "fmt"
 
 // Error is an error whose code and message are safe to send to the client.
-// Anything that isn't an *Error (or media.ErrNotFound) becomes a 500 with no details.
+// Anything that isn't an *Error (or a media domain error) becomes a 500 with no details.
 type Error struct {
 	Status  int    // HTTP status code
 	Code    string // stable, machine-readable; clients switch on it
@@ -18,6 +18,10 @@ func validationError(format string, args ...any) *Error {
 
 func notFoundError(format string, args ...any) *Error {
 	return &Error{Status: 404, Code: "not_found", Message: fmt.Sprintf(format, args...)}
+}
+
+func conflictError(format string, args ...any) *Error {
+	return &Error{Status: 409, Code: "conflict", Message: fmt.Sprintf(format, args...)}
 }
 
 func notImplementedError(format string, args ...any) *Error {

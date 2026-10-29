@@ -16,8 +16,10 @@ import (
 	"time"
 
 	"github.com/ShouryaTyagi042/Velora/server/internal/api"
-	"github.com/ShouryaTyagi042/Velora/server/internal/memstore"
+	"github.com/ShouryaTyagi042/Velora/server/internal/media"
+	"github.com/ShouryaTyagi042/Velora/server/internal/postgres"
 	"github.com/ShouryaTyagi042/Velora/server/internal/scanner"
+	"github.com/ShouryaTyagi042/Velora/server/migrations"
 )
 
 func main() {
@@ -49,7 +51,23 @@ func run() error {
 	}
 	defer root.Close()
 
-	repo := memstore.New(nil)
+	dsn := os.Getenv("VELORA_DATABASE_URL")
+	if dsn == "" {
+		return errors.New("VELORA_DATABASE_URL is not set: e.g. postgres://velora:pw@localhost:5432/velora?sslmode=disable")
+	}
+	db, err := postgres.Open(context.Background(), dsn)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	// Migrations run on every start: each applies once, so a started server is always current.
+	version, err := postgres.Migrate(context.Background(), db, migrations.FS)
+	if err != nil {
+		return err
+	}
+	log.Printf("database migrated to version %d", version)
+
+	repo := postgres.NewMediaRepo(db)
 	lib := &library{fsys: root.FS(), store: repo}
 	if _, _, err := lib.Rescan(context.Background()); err != nil {
 		return fmt.Errorf("initial scan of %s: %w", mediaDir, err)
@@ -117,11 +135,11 @@ func corsOrigins() []string {
 // library connects the scanner to the store. It satisfies api.Rescanner.
 type library struct {
 	fsys  fs.FS
-	store *memstore.Store
+	store media.Syncer
 	mu    sync.Mutex // one scan at a time; a second POST /api/scan waits for the first
 }
 
-// Rescan walks the library and swaps the store's contents for what it found.
+// Rescan walks the library and makes the store match what it found, in one transaction.
 func (l *library) Rescan(ctx context.Context) (int, []string, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -131,9 +149,13 @@ func (l *library) Rescan(ctx context.Context) (int, []string, error) {
 	if err != nil {
 		return 0, nil, err
 	}
-	l.store.Replace(ctx, res.Items)
+	sync, err := l.store.Sync(ctx, res.Items, start)
+	if err != nil {
+		return 0, nil, fmt.Errorf("save scan: %w", err)
+	}
 
-	log.Printf("scan: %d items, %d warnings in %s", len(res.Items), len(res.Warnings), time.Since(start))
+	log.Printf("scan: %d upserted, %d newly missing, %d warnings in %s",
+		sync.Upserted, sync.Missing, len(res.Warnings), time.Since(start).Round(time.Millisecond))
 	for _, w := range res.Warnings {
 		log.Printf("scan warning: %s", w)
 	}

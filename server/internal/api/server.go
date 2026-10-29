@@ -17,6 +17,9 @@ func NewHandler(repo media.Repository, lib Rescanner, files fs.FS) http.Handler 
 	mux.Handle("GET /health", HandlerE(health))
 	mux.Handle("GET /api/media", listMedia(repo))
 	mux.Handle("GET /api/media/{id}", getMedia(repo))
+	mux.Handle("POST /api/media/{id}/actors", addActor(repo))
+	mux.Handle("DELETE /api/media/{id}/actors/{name}", removeActor(repo))
+	mux.Handle("GET /api/actors", listActors(repo))
 	mux.Handle("GET /api/media/{id}/thumbnail", HandlerE(getThumbnail))
 	mux.Handle("GET /api/media/{id}/stream", streamVideo(repo, files, http.ServeContent)) // GET patterns also match HEAD
 	mux.Handle("POST /api/scan", scanLibrary(lib))

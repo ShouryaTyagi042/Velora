@@ -49,6 +49,10 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 		// already client-safe
 	case errors.Is(err, media.ErrNotFound):
 		apiErr = notFoundError("not found")
+	case errors.Is(err, media.ErrNotVideo):
+		apiErr = validationError("actors apply to videos only")
+	case errors.Is(err, media.ErrFolderActor):
+		apiErr = conflictError("folder actors change by renaming the folder")
 	default:
 		log.Printf("internal error: request_id=%s %s %s: %v",
 			requestIDFrom(r.Context()), r.Method, r.URL.Path, err)

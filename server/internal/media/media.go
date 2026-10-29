@@ -24,7 +24,7 @@ type ActorSource string
 
 const (
 	ActorFromFolder ActorSource = "folder" // from movies/<actor>/; changes only by renaming the folder
-	ActorManual     ActorSource = "manual" // added in the app (phase 7)
+	ActorManual     ActorSource = "manual" // added in the app; the scanner never touches it
 )
 
 // ActorTag is one actor on a video.
@@ -41,16 +41,17 @@ type ComicMeta struct {
 
 // Media is one item in the library: a video file or a comic folder.
 type Media struct {
-	ID        string     `json:"id"`
-	Title     string     `json:"title"`
-	Kind      Kind       `json:"kind"`
-	RelPath   string     `json:"-"` // path under the library root (file for a video, folder for a comic); never sent to clients
-	MimeType  string     `json:"mimeType,omitempty"`
-	SizeBytes int64      `json:"sizeBytes"`
-	ModTime   time.Time  `json:"modTime"`
-	AddedAt   time.Time  `json:"addedAt"`
-	Actors    []ActorTag `json:"actors,omitempty"` // videos only
-	Comic     *ComicMeta `json:"comic,omitempty"`  // comics only
+	ID          string     `json:"id"`
+	Fingerprint string     `json:"-"` // hash of RelPath: how a scan recognises an item it has seen before
+	Title       string     `json:"title"`
+	Kind        Kind       `json:"kind"`
+	RelPath     string     `json:"-"` // path under the library root (file for a video, folder for a comic); never sent to clients
+	MimeType    string     `json:"mimeType,omitempty"`
+	SizeBytes   int64      `json:"sizeBytes"`
+	ModTime     time.Time  `json:"modTime"`
+	AddedAt     time.Time  `json:"addedAt"`
+	Actors      []ActorTag `json:"actors,omitempty"` // videos only
+	Comic       *ComicMeta `json:"comic,omitempty"`  // comics only
 }
 
 // HasActor reports whether any of m's actors is called name.
@@ -63,5 +64,9 @@ func (m Media) HasActor(name string) bool {
 	return false
 }
 
-// ErrNotFound is returned when no media has the requested id.
-var ErrNotFound = errors.New("media: not found")
+// Domain errors. The API maps each to a status in one place (api.writeError).
+var (
+	ErrNotFound    = errors.New("media: not found")
+	ErrNotVideo    = errors.New("media: actors apply to videos only")
+	ErrFolderActor = errors.New("media: folder actors change by renaming the folder")
+)

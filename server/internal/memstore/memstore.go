@@ -1,4 +1,8 @@
-// Package memstore is an in-memory media.Repository.
+// Package memstore is an in-memory media.Repository: the test double for the Postgres one.
+//
+// It follows the same rules as internal/postgres (the shared suite in mediatest checks both),
+// but nothing survives the process: manual actors added here are gone on restart. Only the
+// Postgres repository makes them durable.
 package memstore
 
 import (
@@ -7,47 +11,74 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ShouryaTyagi042/Velora/server/internal/media"
 )
 
+// entry is one stored item. Missing items stay (Postgres never deletes them either) but are
+// invisible to readers.
+type entry struct {
+	m       media.Media
+	missing bool
+}
+
 // Store holds media in a map guarded by a read/write mutex,
-// so readers (handlers) and a future writer (the phase 3 scanner) can share it.
+// so readers (handlers) and the writer (a scan) can share it.
 type Store struct {
 	mu    sync.RWMutex
-	items map[string]media.Media
+	items map[string]*entry // by ID
 }
 
 // New returns a Store seeded with the given media.
 func New(seed []media.Media) *Store {
-	s := &Store{items: make(map[string]media.Media, len(seed))}
+	s := &Store{items: make(map[string]*entry, len(seed))}
 	for _, m := range seed {
-		s.items[m.ID] = m
+		s.items[m.ID] = &entry{m: m}
 	}
 	return s
 }
 
-// Replace swaps the whole library for items, e.g. after a rescan.
-// The new map is built before taking the lock, so readers wait only for the swap itself,
-// and they see either the old library or the new one, never a mix.
-func (s *Store) Replace(ctx context.Context, items []media.Media) {
-	next := make(map[string]media.Media, len(items))
+// Sync implements media.Syncer. Items are matched by Fingerprint, which is also their ID here.
+// An item seen before keeps its AddedAt and its manual actors; its folder actor is replaced.
+func (s *Store) Sync(ctx context.Context, items []media.Media, scannedAt time.Time) (media.SyncResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	seen := make(map[string]bool, len(items))
 	for _, m := range items {
-		next[m.ID] = m
+		m.ID = m.Fingerprint
+		seen[m.ID] = true
+		m.Actors = folderActors(m.Actors) // the scanner only owns folder links
+		if old, ok := s.items[m.ID]; ok {
+			m.AddedAt = old.m.AddedAt
+			m.Actors = mergeActors(m.Actors, old.m.Actors)
+		} else {
+			m.AddedAt = scannedAt
+		}
+		s.items[m.ID] = &entry{m: m}
 	}
 
-	s.mu.Lock()
-	s.items = next
-	s.mu.Unlock()
+	missing := 0
+	for id, e := range s.items {
+		if !seen[id] && !e.missing {
+			e.missing = true
+			missing++
+		}
+	}
+	return media.SyncResult{Upserted: len(items), Missing: missing}, nil
 }
 
-// List returns a copy of every item, sorted by title (case-insensitive, then by id so
-// equal titles keep a stable order).
-func (s *Store) List(ctx context.Context) ([]media.Media, error) {
+// List returns a copy of every available item matching f, sorted by title (case-insensitive,
+// then by id so equal titles keep a stable order).
+func (s *Store) List(ctx context.Context, f media.ListFilter) ([]media.Media, error) {
 	s.mu.RLock()
 	out := make([]media.Media, 0, len(s.items))
-	for _, m := range s.items {
-		out = append(out, m)
+	for _, e := range s.items {
+		if e.missing || (f.Kind != "" && e.m.Kind != f.Kind) || (f.Actor != "" && !e.m.HasActor(f.Actor)) {
+			continue
+		}
+		out = append(out, e.m)
 	}
 	s.mu.RUnlock()
 
@@ -60,14 +91,117 @@ func (s *Store) List(ctx context.Context) ([]media.Media, error) {
 	return out, nil
 }
 
-// Get returns the item with the given id, or media.ErrNotFound.
+// Get returns the available item with the given id, or media.ErrNotFound.
 func (s *Store) Get(ctx context.Context, id string) (media.Media, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	m, ok := s.items[id]
-	if !ok {
+	e, ok := s.items[id]
+	if !ok || e.missing {
 		return media.Media{}, media.ErrNotFound
 	}
-	return m, nil
+	return e.m, nil
+}
+
+// ListActors counts available videos per actor, both sources.
+func (s *Store) ListActors(ctx context.Context) ([]media.ActorCount, error) {
+	s.mu.RLock()
+	counts := map[string]int{}
+	for _, e := range s.items {
+		if e.missing || e.m.Kind != media.KindVideo {
+			continue
+		}
+		for _, a := range e.m.Actors {
+			counts[a.Name]++
+		}
+	}
+	s.mu.RUnlock()
+
+	out := make([]media.ActorCount, 0, len(counts))
+	for name, n := range counts {
+		out = append(out, media.ActorCount{Name: name, VideoCount: n})
+	}
+	slices.SortFunc(out, func(a, b media.ActorCount) int { return strings.Compare(a.Name, b.Name) })
+	return out, nil
+}
+
+// AddActor implements media.Repository.
+func (s *Store) AddActor(ctx context.Context, id, name string) (media.Media, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	e, ok := s.items[id]
+	if !ok || e.missing {
+		return media.Media{}, media.ErrNotFound
+	}
+	if e.m.Kind != media.KindVideo {
+		return media.Media{}, media.ErrNotVideo
+	}
+	if !e.m.HasActor(name) { // an existing link, folder or manual, is left as it is
+		e.m.Actors = sortActors(append(slices.Clone(e.m.Actors), media.ActorTag{Name: name, Source: media.ActorManual}))
+	}
+	return e.m, nil
+}
+
+// RemoveActor implements media.Repository.
+func (s *Store) RemoveActor(ctx context.Context, id, name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	e, ok := s.items[id]
+	if !ok || e.missing {
+		return media.ErrNotFound
+	}
+	i := slices.IndexFunc(e.m.Actors, func(a media.ActorTag) bool { return a.Name == name })
+	switch {
+	case i < 0:
+		return media.ErrNotFound
+	case e.m.Actors[i].Source == media.ActorFromFolder:
+		return media.ErrFolderActor
+	}
+	e.m.Actors = slices.Delete(slices.Clone(e.m.Actors), i, i+1)
+	if len(e.m.Actors) == 0 {
+		e.m.Actors = nil
+	}
+	return nil
+}
+
+func folderActors(tags []media.ActorTag) []media.ActorTag {
+	var out []media.ActorTag
+	for _, a := range tags {
+		if a.Source == media.ActorFromFolder {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// mergeActors keeps old's manual tags next to the new folder tags. The folder wins: a manual
+// tag for the folder actor is dropped, since the folder tag says the same thing.
+func mergeActors(folder, old []media.ActorTag) []media.ActorTag {
+	out := slices.Clone(folder)
+	for _, a := range old {
+		if a.Source == media.ActorManual && !slices.ContainsFunc(out, func(b media.ActorTag) bool { return b.Name == a.Name }) {
+			out = append(out, a)
+		}
+	}
+	return sortActors(out)
+}
+
+// sortActors orders tags like the Postgres query: the folder actor first, then manual ones by name.
+func sortActors(tags []media.ActorTag) []media.ActorTag {
+	slices.SortFunc(tags, func(a, b media.ActorTag) int {
+		return cmp.Or(
+			cmp.Compare(rank(a.Source), rank(b.Source)),
+			strings.Compare(a.Name, b.Name),
+		)
+	})
+	return tags
+}
+
+func rank(s media.ActorSource) int {
+	if s == media.ActorFromFolder {
+		return 0
+	}
+	return 1
 }

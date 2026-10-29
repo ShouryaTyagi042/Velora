@@ -24,6 +24,19 @@ export async function getJSON<T>(path: string, { signal }: { signal?: AbortSigna
   return (await res.json()) as T;
 }
 
+// sendJSON sends a write: body (if any) as JSON, and the response parsed as T. A 204 has no
+// body, so it resolves to undefined; use T = void for those endpoints.
+export async function sendJSON<T>(method: "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${baseUrl}${path}`, {
+    method,
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) throw await toApiError(res);
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}
+
 async function toApiError(res: Response): Promise<ApiError> {
   try {
     const body = (await res.json()) as ErrorEnvelope;

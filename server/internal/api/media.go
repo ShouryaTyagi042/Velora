@@ -31,16 +31,10 @@ func listMedia(repo media.Repository) HandlerE {
 			return validationError("actor must be at most %d bytes", maxActorLen)
 		}
 
-		all, err := repo.List(r.Context())
+		// The database filters; an unknown actor is a valid filter that just matches nothing.
+		items, err := repo.List(r.Context(), media.ListFilter{Kind: kind, Actor: actor})
 		if err != nil {
 			return err
-		}
-
-		items := make([]media.Media, 0, len(all))
-		for _, m := range all {
-			if (kind == "" || m.Kind == kind) && (actor == "" || m.HasActor(actor)) {
-				items = append(items, m) // an unknown actor is a valid filter: it just matches nothing
-			}
 		}
 		respondJSON(w, http.StatusOK, listResponse{Items: items})
 		return nil

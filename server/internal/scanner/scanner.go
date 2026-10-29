@@ -97,14 +97,14 @@ func scanVideo(res *Result, p string, d fs.DirEntry) {
 	}
 
 	m := media.Media{
-		ID:        idFor(p),
-		Title:     strings.TrimSuffix(d.Name(), path.Ext(d.Name())),
-		Kind:      media.KindVideo,
-		RelPath:   p,
-		MimeType:  mimeType,
-		SizeBytes: info.Size(),
-		ModTime:   info.ModTime(),
-		AddedAt:   info.ModTime(), // no database yet; phase 7 records when it was first seen
+		ID:          idFor(p), // memstore's id; Postgres assigns its own and keeps this as the fingerprint
+		Fingerprint: idFor(p),
+		Title:       strings.TrimSuffix(d.Name(), path.Ext(d.Name())),
+		Kind:        media.KindVideo,
+		RelPath:     p,
+		MimeType:    mimeType,
+		SizeBytes:   info.Size(),
+		ModTime:     info.ModTime(),
 	}
 	if actor := folderActor(p); actor != "" {
 		m.Actors = []media.ActorTag{{Name: actor, Source: media.ActorFromFolder}}
@@ -160,14 +160,14 @@ func scanComic(res *Result, fsys fs.FS, dir string) {
 	slices.SortFunc(pages, naturalCompare)
 
 	res.Items = append(res.Items, media.Media{
-		ID:        idFor(dir),
-		Title:     path.Base(dir),
-		Kind:      media.KindComic,
-		RelPath:   dir,
-		SizeBytes: size,
-		ModTime:   newest, // a folder's own mtime ignores rewritten pages; the newest page doesn't
-		AddedAt:   newest,
-		Comic:     &media.ComicMeta{PageCount: len(pages), Pages: pages},
+		ID:          idFor(dir),
+		Fingerprint: idFor(dir),
+		Title:       path.Base(dir),
+		Kind:        media.KindComic,
+		RelPath:     dir,
+		SizeBytes:   size,
+		ModTime:     newest, // a folder's own mtime ignores rewritten pages; the newest page doesn't
+		Comic:       &media.ComicMeta{PageCount: len(pages), Pages: pages},
 	})
 }
 
