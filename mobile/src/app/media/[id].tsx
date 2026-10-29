@@ -27,18 +27,17 @@ function MediaDetails({ media: initial }: { media: Media }) {
   const [media, setMedia] = useState(initial);
   const isVideo = media.kind === MediaKind.Video;
   const actors = media.actors ?? []; // omitted from the JSON when there are none
-  const play = () => router.push({ pathname: "/player/[id]", params: { id: media.id } });
+  const open = () => router.push({ pathname: isVideo ? "/player/[id]" : "/reader/[id]", params: { id: media.id } });
 
   return (
     <ScrollView contentContainerStyle={styles.content}>
       <Stack.Screen options={{ title: media.title }} />
 
-      {/* A ▶ looks tappable, so for a video the poster is a second Play button. */}
+      {/* The poster is a second Play (or Read) button: a ▶ looks tappable. */}
       <Pressable
-        disabled={!isVideo}
-        onPress={play}
-        accessibilityRole={isVideo ? "button" : undefined}
-        accessibilityLabel={isVideo ? `Play ${media.title}` : undefined}
+        onPress={open}
+        accessibilityRole="button"
+        accessibilityLabel={`${isVideo ? "Play" : "Read"} ${media.title}`}
         style={({ pressed }) => [styles.poster, { aspectRatio: isVideo ? 16 / 9 : 2 / 3 }, pressed && styles.pressed]}
       >
         <Text style={styles.glyph}>{isVideo ? "▶" : "▤"}</Text>
@@ -68,22 +67,12 @@ function MediaDetails({ media: initial }: { media: Media }) {
       )}
       {isVideo && <AddActor mediaId={media.id} onAdded={setMedia} />}
 
-      {isVideo ? (
-        <Pressable
-          style={({ pressed }) => [styles.button, { backgroundColor: colors.primary }, pressed && styles.pressed]}
-          onPress={play}
-        >
-          <Text style={styles.buttonText}>Play</Text>
-        </Pressable>
-      ) : (
-        <>
-          {/* No-op until the comic reader (phase 8) exists. */}
-          <View style={[styles.button, styles.disabled, { backgroundColor: colors.primary }]}>
-            <Text style={styles.buttonText}>Read</Text>
-          </View>
-          <Text style={styles.hint}>The reader arrives in phase 8.</Text>
-        </>
-      )}
+      <Pressable
+        style={({ pressed }) => [styles.button, { backgroundColor: colors.primary }, pressed && styles.pressed]}
+        onPress={open}
+      >
+        <Text style={styles.buttonText}>{isVideo ? "Play" : "Read"}</Text>
+      </Pressable>
     </ScrollView>
   );
 }
@@ -161,7 +150,6 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.7 },
   disabled: { opacity: 0.5 },
   buttonText: { color: "#fff", fontWeight: "600", fontSize: 16 },
-  hint: { color: "#888", textAlign: "center", fontSize: 13 },
   addActor: { gap: 4 },
   addRow: { flexDirection: "row", gap: 8 },
   input: { flex: 1, borderWidth: StyleSheet.hairlineWidth, borderRadius: 10, paddingHorizontal: 12, minHeight: 44, fontSize: 16 },

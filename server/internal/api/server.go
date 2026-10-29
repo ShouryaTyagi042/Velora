@@ -22,6 +22,8 @@ func NewHandler(repo media.Repository, lib Rescanner, files fs.FS) http.Handler 
 	mux.Handle("GET /api/actors", listActors(repo))
 	mux.Handle("GET /api/media/{id}/thumbnail", HandlerE(getThumbnail))
 	mux.Handle("GET /api/media/{id}/stream", streamVideo(repo, files, http.ServeContent)) // GET patterns also match HEAD
+	mux.Handle("GET /api/media/{id}/pages", listPages(repo))
+	mux.Handle("GET /api/media/{id}/pages/{n}", getPage(repo, files))
 	mux.Handle("POST /api/scan", scanLibrary(lib))
 
 	// Outermost first: Recover catches panics from everything inside it.

@@ -1,4 +1,4 @@
-package scanner
+package comics
 
 import (
 	"slices"
@@ -7,7 +7,7 @@ import (
 
 func TestNaturalCompareSortsPages(t *testing.T) {
 	got := []string{"page-10.png", "page-2.png", "page-1.png", "page-9.png", "page-100.png"}
-	slices.SortFunc(got, naturalCompare)
+	slices.SortFunc(got, NaturalCompare)
 	want := []string{"page-1.png", "page-2.png", "page-9.png", "page-10.png", "page-100.png"}
 	if !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)
@@ -32,8 +32,8 @@ func TestNaturalCompare(t *testing.T) {
 		{"page-9999999999999999999999999", "page-10000000000000000000000000", -1},
 	}
 	for _, tt := range tests {
-		if got := naturalCompare(tt.a, tt.b); sign(got) != tt.want {
-			t.Errorf("naturalCompare(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
+		if got := NaturalCompare(tt.a, tt.b); sign(got) != tt.want {
+			t.Errorf("NaturalCompare(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
 		}
 	}
 }

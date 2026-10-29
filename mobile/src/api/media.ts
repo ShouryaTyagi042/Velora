@@ -62,6 +62,13 @@ export function parseKind(value: string | undefined): MediaKind | undefined {
   return Object.values(MediaKind).find((k) => k === value);
 }
 
+// pageUrl is page n (0-based) of a comic. v is the comic's modTime, which a rescan changes when
+// any page does: the server marks versioned URLs immutable, so the phone never asks twice, and a
+// changed page simply gets a new URL.
+export function pageUrl(comic: Media, n: number): string {
+  return `${baseUrl}/api/media/${encodeURIComponent(comic.id)}/pages/${n}?v=${encodeURIComponent(comic.modTime)}`;
+}
+
 // streamUrl is what the native player fetches: GET /api/media/{id}/stream with Range headers.
 // The player opens its own connections, so this is a URL, not a getJSON call.
 export function streamUrl(id: string): string {

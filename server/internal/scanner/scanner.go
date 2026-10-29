@@ -7,10 +7,9 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
-	"slices"
 	"strings"
-	"time"
 
+	"github.com/ShouryaTyagi042/Velora/server/internal/comics"
 	"github.com/ShouryaTyagi042/Velora/server/internal/media"
 )
 
@@ -113,51 +112,18 @@ func scanVideo(res *Result, p string, d fs.DirEntry) {
 }
 
 // scanComic records the folder dir ("comics/<title>") as one comic made of its images.
+// What counts as a page, and in which order, is decided by package comics.
 func scanComic(res *Result, fsys fs.FS, dir string) {
-	entries, err := fs.ReadDir(fsys, dir)
+	l, err := comics.ListPages(fsys, dir)
 	if err != nil {
 		res.warn(dir, err.Error())
 		return
 	}
-
-	var (
-		pages   []string
-		size    int64
-		newest  time.Time
-		skipped bool
-	)
-	for _, e := range entries {
-		name := e.Name()
-		switch {
-		case hidden(name):
-			continue
-		case e.IsDir():
-			res.warn(dir+"/"+name, "subfolder inside a comic, ignored")
-			continue
-		}
-		if _, ok := imageTypes[ext(name)]; !ok || !e.Type().IsRegular() {
-			continue // notes.txt, a symlinked page …: not a page
-		}
-		info, err := e.Info()
-		if err != nil {
-			res.warn(dir+"/"+name, err.Error())
-			skipped = true
-			continue
-		}
-		pages = append(pages, name)
-		size += info.Size()
-		if info.ModTime().After(newest) {
-			newest = info.ModTime()
-		}
-	}
-
-	if len(pages) == 0 {
-		if !skipped {
-			res.warn(dir, "no images, skipped")
-		}
+	res.Warnings = append(res.Warnings, l.Warnings...)
+	if len(l.Pages) == 0 {
+		res.warn(dir, "no images, skipped")
 		return
 	}
-	slices.SortFunc(pages, naturalCompare)
 
 	res.Items = append(res.Items, media.Media{
 		ID:          idFor(dir),
@@ -165,9 +131,9 @@ func scanComic(res *Result, fsys fs.FS, dir string) {
 		Title:       path.Base(dir),
 		Kind:        media.KindComic,
 		RelPath:     dir,
-		SizeBytes:   size,
-		ModTime:     newest, // a folder's own mtime ignores rewritten pages; the newest page doesn't
-		Comic:       &media.ComicMeta{PageCount: len(pages), Pages: pages},
+		SizeBytes:   l.Size,
+		ModTime:     l.ModTime,
+		Comic:       &media.ComicMeta{PageCount: len(l.Pages), Pages: l.Pages},
 	})
 }
 

@@ -73,6 +73,8 @@ Every response is JSON (`Content-Type: application/json; charset=utf-8`) and car
 | `GET /api/media?actor=<name>` | `200 {"items":[...]}` with that actor (exact match; combines with `kind`); an unknown actor gives `[]` | `400 validation` if empty or over 200 bytes |
 | `GET /api/media/{id}` | `200 Media` | `404 not_found` |
 | `GET /api/media/{id}/thumbnail` | | `501 not_implemented` (phase 9) |
+| `GET /api/media/{id}/pages` | `200 {"pageCount":24}` | `404 not_found` if not a comic |
+| `GET /api/media/{id}/pages/{n}` | `200` the image of page `n` (0-based), with `Last-Modified`/`304` and ranges; with `?v=<modTime>` also `Cache-Control: immutable` | `400 validation` if `n` isn't a number; `404 not_found` if out of range, not a comic, or deleted since the scan |
 | `POST /api/media/{id}/actors` | `200 Media` with the actor added; adding one it already has is a no-op `200`. Body `{"name":"Carrie-Anne Moss"}`, 1–100 characters after trimming | `400 validation` (bad body, or a comic), `404 not_found` |
 | `DELETE /api/media/{id}/actors/{name}` | `204` | `404 not_found` (no such link), `409 conflict` for a folder actor (rename the folder instead) |
 | `GET /api/actors` | `200 {"items":[{"name":"Keanu Reeves","videoCount":2}]}`: available videos per actor, both sources | |
