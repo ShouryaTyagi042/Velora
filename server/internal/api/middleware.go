@@ -136,12 +136,13 @@ func CORS(origins []string, next http.Handler) http.Handler {
 			// Without this, page JavaScript can't read these headers even when allowed.
 			h.Set("Access-Control-Expose-Headers", "X-Request-ID, Content-Range, Accept-Ranges")
 		}
-		// A preflight: the browser asks before sending a request it considers risky
-		// (a POST with a JSON body, a Range header). Answer it here; the routes only know GET/POST.
+		// A preflight: the browser asks before sending a request it considers risky (a JSON body,
+		// a Range or Authorization header, PUT or DELETE). Answer it here, before requireUser:
+		// the browser never sends credentials on a preflight, so it would always be a 401.
 		if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
 			if allowed[origin] {
-				h.Set("Access-Control-Allow-Methods", "GET, HEAD, POST")
-				h.Set("Access-Control-Allow-Headers", "Content-Type, Range")
+				h.Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, DELETE")
+				h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Range")
 				h.Set("Access-Control-Max-Age", "600")
 			}
 			w.WriteHeader(http.StatusNoContent)

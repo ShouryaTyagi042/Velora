@@ -16,12 +16,21 @@ func validationError(format string, args ...any) *Error {
 	return &Error{Status: 400, Code: "validation", Message: fmt.Sprintf(format, args...)}
 }
 
+// unauthorizedError is 401: no valid session. (403 would be "signed in, but not allowed".)
+func unauthorizedError(format string, args ...any) *Error {
+	return &Error{Status: 401, Code: "unauthorized", Message: fmt.Sprintf(format, args...)}
+}
+
 func notFoundError(format string, args ...any) *Error {
 	return &Error{Status: 404, Code: "not_found", Message: fmt.Sprintf(format, args...)}
 }
 
 func conflictError(format string, args ...any) *Error {
 	return &Error{Status: 409, Code: "conflict", Message: fmt.Sprintf(format, args...)}
+}
+
+func tooManyRequestsError(format string, args ...any) *Error {
+	return &Error{Status: 429, Code: "rate_limited", Message: fmt.Sprintf(format, args...)}
 }
 
 func notImplementedError(format string, args ...any) *Error {

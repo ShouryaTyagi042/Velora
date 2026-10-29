@@ -17,8 +17,29 @@ export class ApiError extends Error {
   }
 }
 
+// The session token, held in memory for every request. AuthProvider owns it: it loads it from
+// the Keychain / Keystore at launch and sets it here; this module never persists anything.
+let token: string | null = null;
+let onUnauthorized: () => void = () => {};
+
+export function setToken(t: string | null) {
+  token = t;
+}
+
+// setUnauthorizedHandler registers what a 401 means to the app: the session is gone (expired,
+// logged out elsewhere), so sign in again.
+export function setUnauthorizedHandler(fn: () => void) {
+  onUnauthorized = fn;
+}
+
+// authHeaders is the Authorization header for requests the app doesn't make through fetch: the
+// video player's stream and expo-image's thumbnails and pages.
+export function authHeaders(): Record<string, string> {
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 export async function getJSON<T>(path: string, { signal }: { signal?: AbortSignal } = {}): Promise<T> {
-  const res = await fetch(`${baseUrl}${path}`, { signal });
+  const res = await fetch(`${baseUrl}${path}`, { signal, headers: authHeaders() });
   if (!res.ok) throw await toApiError(res);
   // The one place the untyped wire becomes a type. Nothing else in the app sees `any`.
   return (await res.json()) as T;
@@ -29,7 +50,7 @@ export async function getJSON<T>(path: string, { signal }: { signal?: AbortSigna
 export async function sendJSON<T>(method: "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${baseUrl}${path}`, {
     method,
-    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    headers: body === undefined ? authHeaders() : { ...authHeaders(), "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) throw await toApiError(res);
@@ -38,6 +59,9 @@ export async function sendJSON<T>(method: "POST" | "PUT" | "DELETE", path: strin
 }
 
 async function toApiError(res: Response): Promise<ApiError> {
+  // A 401 with a token means the server no longer knows it. (Without one it's a failed sign-in,
+  // which the login screen shows itself.)
+  if (res.status === 401 && token) onUnauthorized();
   try {
     const body = (await res.json()) as ErrorEnvelope;
     return new ApiError(res.status, body.error.code, body.error.message);

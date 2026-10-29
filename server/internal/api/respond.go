@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/ShouryaTyagi042/Velora/server/internal/auth"
 	"github.com/ShouryaTyagi042/Velora/server/internal/media"
 )
 
@@ -53,6 +54,12 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 		apiErr = validationError("actors apply to videos only")
 	case errors.Is(err, media.ErrFolderActor):
 		apiErr = conflictError("folder actors change by renaming the folder")
+	case errors.Is(err, auth.ErrInvalidCredentials):
+		apiErr = unauthorizedError("wrong username or password")
+	case errors.Is(err, auth.ErrUnauthenticated):
+		// RFC 6750: a 401 says which scheme to use.
+		w.Header().Set("WWW-Authenticate", `Bearer realm="velora"`)
+		apiErr = unauthorizedError("sign in first")
 	default:
 		log.Printf("internal error: request_id=%s %s %s: %v",
 			requestIDFrom(r.Context()), r.Method, r.URL.Path, err)

@@ -21,7 +21,7 @@ type pagesResponse struct {
 // getComic returns the comic with the id in the path, or a 404 for anything else.
 func getComic(repo media.Repository, r *http.Request) (media.Media, error) {
 	id := r.PathValue("id")
-	m, err := repo.Get(r.Context(), id)
+	m, err := repo.Get(r.Context(), currentUser(r).ID, id)
 	if errors.Is(err, media.ErrNotFound) {
 		return m, notFoundError("media %s not found", id)
 	}
@@ -94,8 +94,9 @@ func servePage(w http.ResponseWriter, r *http.Request, files fs.FS, m media.Medi
 
 	// immutable only on a versioned URL: ?v= is the comic's modTime, which a rescan changes when
 	// any page does, so a changed page gets a new URL. A bare URL must revalidate (Last-Modified).
+	// private: the phone may cache a page, a shared proxy must not (it was fetched with a token).
 	if r.URL.Query().Get("v") != "" {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
 	}
 	w.Header().Set("Content-Type", comics.ContentType(name))
 	http.ServeContent(w, r, name, info.ModTime(), content)

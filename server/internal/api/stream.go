@@ -29,7 +29,7 @@ type contentServer func(w http.ResponseWriter, r *http.Request, name string, mod
 func streamVideo(repo media.Repository, files fs.FS, serve contentServer) HandlerE {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		id := r.PathValue("id")
-		m, err := repo.Get(r.Context(), id)
+		m, err := repo.Get(r.Context(), currentUser(r).ID, id)
 		if errors.Is(err, media.ErrNotFound) {
 			return notFoundError("media %s not found", id)
 		}

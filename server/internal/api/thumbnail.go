@@ -18,7 +18,7 @@ import (
 func getThumbnail(repo media.Repository, files, thumbs fs.FS) HandlerE {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		id := r.PathValue("id")
-		m, err := repo.Get(r.Context(), id)
+		m, err := repo.Get(r.Context(), currentUser(r).ID, id)
 		if errors.Is(err, media.ErrNotFound) {
 			return notFoundError("media %s not found", id)
 		}
@@ -51,7 +51,8 @@ func getThumbnail(repo media.Repository, files, thumbs fs.FS) HandlerE {
 			return fmt.Errorf("thumbnail %s: file does not support seeking", m.ID)
 		}
 		// A day, then revalidate with If-Modified-Since: a re-extracted thumbnail keeps its URL.
-		w.Header().Set("Cache-Control", "public, max-age=86400")
+		// private: cached by the phone only, never by a proxy, since the request carried a token.
+		w.Header().Set("Cache-Control", "private, max-age=86400")
 		w.Header().Set("Content-Type", "image/jpeg")
 		http.ServeContent(w, r, m.ID+".jpg", info.ModTime(), content)
 		return nil

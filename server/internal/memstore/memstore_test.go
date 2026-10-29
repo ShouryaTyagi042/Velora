@@ -24,7 +24,7 @@ func TestSyncWhileReading(t *testing.T) {
 		}
 	}()
 	for range 1000 {
-		s.List(context.Background(), media.ListFilter{})
+		s.List(context.Background(), 1, media.ListFilter{})
 	}
 	<-done
 }

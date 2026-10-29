@@ -30,7 +30,7 @@ func (r *MediaRepo) NextPending(ctx context.Context) (media.Media, bool, error) 
 		}
 		return media.Media{}, false, err
 	}
-	m, err := r.get(ctx, r.db, formatID(id))
+	m, err := r.get(ctx, r.db, 0, formatID(id)) // the extractor is nobody: no progress needed
 	return m, err == nil, err
 }
 

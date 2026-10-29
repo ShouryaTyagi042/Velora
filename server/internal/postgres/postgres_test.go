@@ -3,11 +3,13 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/ShouryaTyagi042/Velora/server/internal/auth"
 	"github.com/ShouryaTyagi042/Velora/server/internal/extractor"
 	"github.com/ShouryaTyagi042/Velora/server/internal/media"
 	"github.com/ShouryaTyagi042/Velora/server/internal/media/mediatest"
@@ -50,14 +52,66 @@ func emptyDB(t *testing.T) *sql.DB {
 	if testDB == nil {
 		t.Skip("VELORA_TEST_DSN not set")
 	}
-	if _, err := testDB.Exec(`truncate media, actors restart identity cascade`); err != nil {
+	if _, err := testDB.Exec(`truncate media, actors, users restart identity cascade`); err != nil {
 		t.Fatal(err)
 	}
 	return testDB
 }
 
 func TestRepository(t *testing.T) {
-	mediatest.Run(t, func(t *testing.T) mediatest.Store { return NewMediaRepo(emptyDB(t)) })
+	mediatest.Run(t, func(t *testing.T) mediatest.Store {
+		db := emptyDB(t)
+		// The suite saves progress as users 1 and 2; progress rows reference users.
+		users := NewAuthRepo(db)
+		for _, name := range []string{"alice", "bob"} {
+			if _, err := users.CreateUser(context.Background(), name, "not-a-real-hash"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return NewMediaRepo(db)
+	})
+}
+
+func TestAuthRepo(t *testing.T) {
+	ctx := context.Background()
+	r := NewAuthRepo(emptyDB(t))
+
+	u, err := r.CreateUser(ctx, "shourya", "$2a$hash")
+	if err != nil || u.ID == 0 {
+		t.Fatalf("CreateUser = %+v, %v", u, err)
+	}
+	if _, err := r.CreateUser(ctx, "shourya", "$2a$other"); !errors.Is(err, auth.ErrUserExists) {
+		t.Errorf("duplicate CreateUser = %v, want ErrUserExists", err)
+	}
+	if got, hash, err := r.UserByName(ctx, "shourya"); err != nil || got != u || hash != "$2a$hash" {
+		t.Errorf("UserByName = %+v, %q, %v", got, hash, err)
+	}
+	if _, _, err := r.UserByName(ctx, "nobody"); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("UserByName(unknown) = %v, want ErrNotFound", err)
+	}
+
+	th := []byte("0123456789abcdef0123456789abcdef")
+	exp := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	if err := r.CreateSession(ctx, auth.Session{TokenHash: th, UserID: u.ID, ExpiresAt: exp}); err != nil {
+		t.Fatal(err)
+	}
+	sess, su, err := r.Session(ctx, th)
+	if err != nil || su != u || !sess.ExpiresAt.Equal(exp) {
+		t.Errorf("Session = %+v, %+v, %v", sess, su, err)
+	}
+	later := exp.Add(24 * time.Hour)
+	if err := r.ExtendSession(ctx, th, later); err != nil {
+		t.Fatal(err)
+	}
+	if sess, _, _ := r.Session(ctx, th); !sess.ExpiresAt.Equal(later) {
+		t.Errorf("after ExtendSession: expires %v, want %v", sess.ExpiresAt, later)
+	}
+	if err := r.DeleteSession(ctx, th); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.Session(ctx, th); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("after DeleteSession: %v, want ErrNotFound", err)
+	}
 }
 
 func TestMigrateTwiceIsANoOp(t *testing.T) {
@@ -112,7 +166,7 @@ func TestExtractorQueue(t *testing.T) {
 		t.Errorf("extracted %d videos, want 4", len(seen))
 	}
 
-	got, err := repo.List(ctx, media.ListFilter{Kind: media.KindVideo})
+	got, err := repo.List(ctx, 0, media.ListFilter{Kind: media.KindVideo})
 	if err != nil {
 		t.Fatal(err)
 	}

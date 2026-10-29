@@ -31,7 +31,8 @@ type querier interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
-// selectMedia reads media with their comic pages and actors, one row per item. The actors are
+// selectMedia reads media with their comic pages, video metadata, progress and actors, one row
+// per item. $1 is the user whose progress to join (0 matches no rows: no progress). The actors are
 // aggregated into a JSON array in the same query, so a page of 50 items is one query, not 51 (N+1).
 // The folder actor comes first (false sorts before true), then manual ones by name.
 // Left joins keep comics and actor-less videos; the filter stops json_agg from producing
@@ -49,8 +50,8 @@ select m.id, m.fingerprint, m.kind, m.title, m.rel_path, coalesce(m.mime_type, '
 from media m
 left join comic_metadata cm on cm.media_id = m.id
 left join video_metadata vm on vm.media_id = m.id
-left join watch_progress wp   on wp.media_id = m.id and wp.user_id = 1  -- one user until phase 11
-left join reading_progress rp on rp.media_id = m.id and rp.user_id = 1
+left join watch_progress wp   on wp.media_id = m.id and wp.user_id = $1
+left join reading_progress rp on rp.media_id = m.id and rp.user_id = $1
 left join media_actors ma   on ma.media_id = m.id
 left join actors a          on a.id = ma.actor_id
 where m.missing_since is null`
@@ -60,13 +61,13 @@ group by m.id, cm.media_id, vm.media_id, wp.user_id, wp.media_id, rp.user_id, rp
 
 // List implements media.Repository. Both filters run in SQL. The actor filter is an exists, not a
 // join, so the aggregate still sees every actor of a matching video.
-func (r *MediaRepo) List(ctx context.Context, f media.ListFilter) ([]media.Media, error) {
+func (r *MediaRepo) List(ctx context.Context, user int64, f media.ListFilter) ([]media.Media, error) {
 	rows, err := r.db.QueryContext(ctx, selectMedia+`
-  and ($1::text = '' or m.kind = $1)
-  and ($2::text = '' or exists (
+  and ($2::text = '' or m.kind = $2)
+  and ($3::text = '' or exists (
         select 1 from media_actors ma2 join actors a2 on a2.id = ma2.actor_id
-        where ma2.media_id = m.id and a2.name = $2))`+groupMedia+`
-order by lower(m.title), m.id`, string(f.Kind), f.Actor)
+        where ma2.media_id = m.id and a2.name = $3))`+groupMedia+`
+order by lower(m.title), m.id`, user, string(f.Kind), f.Actor)
 	if err != nil {
 		return nil, err
 	}
@@ -85,16 +86,16 @@ order by lower(m.title), m.id`, string(f.Kind), f.Actor)
 }
 
 // Get implements media.Repository.
-func (r *MediaRepo) Get(ctx context.Context, id string) (media.Media, error) {
-	return r.get(ctx, r.db, id)
+func (r *MediaRepo) Get(ctx context.Context, user int64, id string) (media.Media, error) {
+	return r.get(ctx, r.db, user, id)
 }
 
-func (r *MediaRepo) get(ctx context.Context, q querier, id string) (media.Media, error) {
+func (r *MediaRepo) get(ctx context.Context, q querier, user int64, id string) (media.Media, error) {
 	n, ok := parseID(id)
 	if !ok {
 		return media.Media{}, media.ErrNotFound
 	}
-	m, err := r.scanMedia(q.QueryRowContext(ctx, selectMedia+` and m.id = $1`+groupMedia, n))
+	m, err := r.scanMedia(q.QueryRowContext(ctx, selectMedia+` and m.id = $2`+groupMedia, user, n))
 	if errors.Is(err, sql.ErrNoRows) {
 		return media.Media{}, media.ErrNotFound
 	}
@@ -269,7 +270,7 @@ func (r *MediaRepo) ListActors(ctx context.Context) ([]media.ActorCount, error) 
 }
 
 // AddActor implements media.Repository.
-func (r *MediaRepo) AddActor(ctx context.Context, id, name string) (media.Media, error) {
+func (r *MediaRepo) AddActor(ctx context.Context, user int64, id, name string) (media.Media, error) {
 	n, ok := parseID(id)
 	if !ok {
 		return media.Media{}, media.ErrNotFound
@@ -299,7 +300,7 @@ func (r *MediaRepo) AddActor(ctx context.Context, id, name string) (media.Media,
 			on conflict (media_id, actor_id) do nothing`, n, actorID); err != nil {
 			return err
 		}
-		out, err = r.get(ctx, tx, id)
+		out, err = r.get(ctx, tx, user, id)
 		return err
 	})
 	return out, err

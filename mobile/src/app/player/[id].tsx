@@ -4,6 +4,7 @@ import { useVideoPlayer, VideoView } from "expo-video";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
+import { authHeaders } from "@/api/client";
 import { MediaKind, streamUrl, type Media } from "@/api/media";
 import { ErrorView } from "@/components/ErrorView";
 import { Loading } from "@/components/Loading";
@@ -38,7 +39,8 @@ export default function PlayerScreen() {
 }
 
 function Player({ media }: { media: Media }) {
-  const source = { uri: streamUrl(media.id), metadata: { title: media.title } };
+  // The native player makes its own requests, so it gets the session header explicitly.
+  const source = { uri: streamUrl(media.id), headers: authHeaders(), metadata: { title: media.title } };
 
   // The player is a native object (AVPlayer / ExoPlayer) outside the React tree. The hook
   // releases it on unmount, which closes its connections: leaving the screen stops the 206.

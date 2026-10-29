@@ -20,7 +20,7 @@ const continueLimit = 10
 func putProgress(repo media.Repository) HandlerE {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		id := r.PathValue("id")
-		m, err := repo.Get(r.Context(), id)
+		m, err := repo.Get(r.Context(), currentUser(r).ID, id)
 		if errors.Is(err, media.ErrNotFound) {
 			return notFoundError("media %s not found", id)
 		}
@@ -38,7 +38,7 @@ func putProgress(repo media.Repository) HandlerE {
 		if err != nil {
 			return err
 		}
-		stored, err := repo.SaveProgress(r.Context(), id, p)
+		stored, err := repo.SaveProgress(r.Context(), currentUser(r).ID, id, p)
 		if err != nil {
 			return err
 		}
@@ -51,7 +51,7 @@ func putProgress(repo media.Repository) HandlerE {
 func getProgress(repo media.Repository) HandlerE {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		id := r.PathValue("id")
-		m, err := repo.Get(r.Context(), id)
+		m, err := repo.Get(r.Context(), currentUser(r).ID, id)
 		if errors.Is(err, media.ErrNotFound) {
 			return notFoundError("media %s not found", id)
 		}
@@ -74,11 +74,11 @@ type continueResponse struct {
 // getContinue handles GET /api/continue: unfinished videos and comics, most recent first.
 func getContinue(repo media.Repository) HandlerE {
 	return func(w http.ResponseWriter, r *http.Request) error {
-		watching, err := repo.Continue(r.Context(), media.KindVideo, continueLimit)
+		watching, err := repo.Continue(r.Context(), currentUser(r).ID, media.KindVideo, continueLimit)
 		if err != nil {
 			return err
 		}
-		reading, err := repo.Continue(r.Context(), media.KindComic, continueLimit)
+		reading, err := repo.Continue(r.Context(), currentUser(r).ID, media.KindComic, continueLimit)
 		if err != nil {
 			return err
 		}

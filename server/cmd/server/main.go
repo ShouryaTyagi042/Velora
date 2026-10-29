@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/ShouryaTyagi042/Velora/server/internal/api"
+	"github.com/ShouryaTyagi042/Velora/server/internal/auth"
 	"github.com/ShouryaTyagi042/Velora/server/internal/extractor"
 	"github.com/ShouryaTyagi042/Velora/server/internal/ffmpeg"
 	"github.com/ShouryaTyagi042/Velora/server/internal/media"
@@ -58,17 +59,27 @@ func run() error {
 	if dsn == "" {
 		return errors.New("VELORA_DATABASE_URL is not set: e.g. postgres://velora:pw@localhost:5432/velora?sslmode=disable")
 	}
+	// The DSN holds the database password: it is logged only redacted, and never sent to a client.
 	db, err := postgres.Open(context.Background(), dsn)
 	if err != nil {
-		return err
+		return fmt.Errorf("database %s: %w", postgres.Redact(dsn), err)
 	}
 	defer db.Close()
+	log.Printf("database: %s", postgres.Redact(dsn))
 	// Migrations run on every start: each applies once, so a started server is always current.
 	version, err := postgres.Migrate(context.Background(), db, migrations.FS)
 	if err != nil {
 		return err
 	}
 	log.Printf("database migrated to version %d", version)
+
+	users := postgres.NewAuthRepo(db)
+	if ok, err := users.HasUsers(context.Background()); err != nil {
+		return err
+	} else if !ok {
+		log.Print("no users yet: nobody can sign in. Create one with: go run ./cmd/velora-admin create-user <name>")
+	}
+	authn := auth.New(users, auth.Options{})
 
 	// Thumbnails are Velora's own files, derived and disposable: a cache, not the library.
 	if err := ffmpeg.Check(); err != nil {
@@ -91,7 +102,7 @@ func run() error {
 	}
 
 	srv := &http.Server{
-		Handler: api.CORS(corsOrigins(), api.NewHandler(repo, lib, root.FS(), os.DirFS(thumbDir))),
+		Handler: api.CORS(corsOrigins(), api.NewHandler(repo, lib, root.FS(), os.DirFS(thumbDir), authn)),
 		// A client that connects and sends nothing would otherwise hold a goroutine forever.
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,

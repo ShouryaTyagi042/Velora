@@ -49,7 +49,7 @@ func addActor(repo media.Repository) HandlerE {
 		if utf8.RuneCountInString(name) > maxActorName {
 			return validationError("name must be at most %d characters", maxActorName)
 		}
-		m, err := repo.AddActor(r.Context(), r.PathValue("id"), name)
+		m, err := repo.AddActor(r.Context(), currentUser(r).ID, r.PathValue("id"), name)
 		if err != nil {
 			return err // ErrNotFound → 404, ErrNotVideo → 400 (writeError)
 		}

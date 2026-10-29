@@ -9,13 +9,15 @@ import (
 )
 
 // NewHandler returns the HTTP handler for the whole API: routes wrapped in middleware.
-// It depends on interfaces (media.Repository, Rescanner, fs.FS), never on a concrete store,
-// scanner or directory. files is the media library; media RelPaths are opened inside it.
-// thumbs holds the extractor's video thumbnails, {id}.jpg.
-func NewHandler(repo media.Repository, lib Rescanner, files, thumbs fs.FS) http.Handler {
+// It depends on interfaces (media.Repository, Rescanner, fs.FS, Authenticator), never on a
+// concrete store, scanner or directory. files is the media library; media RelPaths are opened
+// inside it. thumbs holds the extractor's video thumbnails, {id}.jpg.
+func NewHandler(repo media.Repository, lib Rescanner, files, thumbs fs.FS, authn Authenticator) http.Handler {
+	// Everything on this mux needs a session: it's mounted below behind requireUser, so a new
+	// route is protected by default and can't be forgotten.
 	mux := http.NewServeMux()
-
-	mux.Handle("GET /health", HandlerE(health))
+	mux.Handle("GET /api/auth/me", HandlerE(me))
+	mux.Handle("POST /api/auth/logout", logout(authn))
 	mux.Handle("GET /api/media", listMedia(repo))
 	mux.Handle("GET /api/media/{id}", getMedia(repo))
 	mux.Handle("POST /api/media/{id}/actors", addActor(repo))
@@ -30,8 +32,15 @@ func NewHandler(repo media.Repository, lib Rescanner, files, thumbs fs.FS) http.
 	mux.Handle("GET /api/media/{id}/pages/{n}", getPage(repo, files))
 	mux.Handle("POST /api/scan", scanLibrary(lib))
 
-	// Outermost first: Recover catches panics from everything inside it.
-	return Recover(RequestID(Logging(mux)))
+	// The only routes open without a session: the health check, and signing in.
+	// "POST /api/auth/login" is more specific than "/api/", so the mux picks it first.
+	public := http.NewServeMux()
+	public.Handle("GET /health", HandlerE(health))
+	public.Handle("POST /api/auth/login", login(authn, newLoginLimiter()))
+	public.Handle("/api/", requireUser(authn, mux))
+
+	// Outermost first: Recover catches panics from everything inside it, auth included.
+	return Recover(RequestID(Logging(public)))
 }
 
 func health(w http.ResponseWriter, r *http.Request) error {

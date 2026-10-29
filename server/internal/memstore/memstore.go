@@ -27,13 +27,18 @@ type entry struct {
 // so readers (handlers) and the writer (a scan) can share it.
 type Store struct {
 	mu       sync.RWMutex
-	items    map[string]*entry          // by ID
-	progress map[string]media.Progress // by media ID; one user for now
+	items    map[string]*entry              // by ID
+	progress map[progressKey]media.Progress // per user and item
+}
+
+type progressKey struct {
+	user int64
+	id   string
 }
 
 // New returns a Store seeded with the given media.
 func New(seed []media.Media) *Store {
-	s := &Store{items: make(map[string]*entry, len(seed)), progress: map[string]media.Progress{}}
+	s := &Store{items: make(map[string]*entry, len(seed)), progress: map[progressKey]media.Progress{}}
 	for _, m := range seed {
 		s.items[m.ID] = &entry{m: m}
 	}
@@ -72,14 +77,14 @@ func (s *Store) Sync(ctx context.Context, items []media.Media, scannedAt time.Ti
 
 // List returns a copy of every available item matching f, sorted by title (case-insensitive,
 // then by id so equal titles keep a stable order).
-func (s *Store) List(ctx context.Context, f media.ListFilter) ([]media.Media, error) {
+func (s *Store) List(ctx context.Context, user int64, f media.ListFilter) ([]media.Media, error) {
 	s.mu.RLock()
 	out := make([]media.Media, 0, len(s.items))
 	for _, e := range s.items {
 		if e.missing || (f.Kind != "" && e.m.Kind != f.Kind) || (f.Actor != "" && !e.m.HasActor(f.Actor)) {
 			continue
 		}
-		out = append(out, s.withProgress(e.m))
+		out = append(out, s.withProgress(user, e.m))
 	}
 	s.mu.RUnlock()
 
@@ -93,7 +98,7 @@ func (s *Store) List(ctx context.Context, f media.ListFilter) ([]media.Media, er
 }
 
 // Get returns the available item with the given id, or media.ErrNotFound.
-func (s *Store) Get(ctx context.Context, id string) (media.Media, error) {
+func (s *Store) Get(ctx context.Context, user int64, id string) (media.Media, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -101,42 +106,43 @@ func (s *Store) Get(ctx context.Context, id string) (media.Media, error) {
 	if !ok || e.missing {
 		return media.Media{}, media.ErrNotFound
 	}
-	return s.withProgress(e.m), nil
+	return s.withProgress(user, e.m), nil
 }
 
-// withProgress returns m with its saved progress, if any. Callers hold s.mu.
-func (s *Store) withProgress(m media.Media) media.Media {
-	if p, ok := s.progress[m.ID]; ok {
+// withProgress returns m with user's saved progress, if any. Callers hold s.mu.
+func (s *Store) withProgress(user int64, m media.Media) media.Media {
+	if p, ok := s.progress[progressKey{user, m.ID}]; ok {
 		m.Progress = &p
 	}
 	return m
 }
 
 // SaveProgress implements media.Repository: the newer save wins.
-func (s *Store) SaveProgress(ctx context.Context, id string, p media.Progress) (media.Progress, error) {
+func (s *Store) SaveProgress(ctx context.Context, user int64, id string, p media.Progress) (media.Progress, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if e, ok := s.items[id]; !ok || e.missing {
 		return media.Progress{}, media.ErrNotFound
 	}
-	if old, ok := s.progress[id]; ok && !old.UpdatedAt.Before(p.UpdatedAt) {
+	k := progressKey{user, id}
+	if old, ok := s.progress[k]; ok && !old.UpdatedAt.Before(p.UpdatedAt) {
 		return old, nil // stale: an older save arrived after a newer one
 	}
-	s.progress[id] = p
+	s.progress[k] = p
 	return p, nil
 }
 
 // Continue implements media.Repository.
-func (s *Store) Continue(ctx context.Context, kind media.Kind, limit int) ([]media.Media, error) {
+func (s *Store) Continue(ctx context.Context, user int64, kind media.Kind, limit int) ([]media.Media, error) {
 	s.mu.RLock()
 	out := []media.Media{}
-	for id, p := range s.progress {
-		e := s.items[id]
-		if e == nil || e.missing || e.m.Kind != kind || p.Completed {
+	for k, p := range s.progress {
+		e := s.items[k.id]
+		if k.user != user || e == nil || e.missing || e.m.Kind != kind || p.Completed {
 			continue
 		}
-		out = append(out, s.withProgress(e.m))
+		out = append(out, s.withProgress(user, e.m))
 	}
 	s.mu.RUnlock()
 
@@ -169,7 +175,7 @@ func (s *Store) ListActors(ctx context.Context) ([]media.ActorCount, error) {
 }
 
 // AddActor implements media.Repository.
-func (s *Store) AddActor(ctx context.Context, id, name string) (media.Media, error) {
+func (s *Store) AddActor(ctx context.Context, user int64, id, name string) (media.Media, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -183,7 +189,7 @@ func (s *Store) AddActor(ctx context.Context, id, name string) (media.Media, err
 	if !e.m.HasActor(name) { // an existing link, folder or manual, is left as it is
 		e.m.Actors = sortActors(append(slices.Clone(e.m.Actors), media.ActorTag{Name: name, Source: media.ActorManual}))
 	}
-	return s.withProgress(e.m), nil
+	return s.withProgress(user, e.m), nil
 }
 
 // RemoveActor implements media.Repository.

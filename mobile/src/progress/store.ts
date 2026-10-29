@@ -47,3 +47,14 @@ export async function unsynced(): Promise<[string, LocalProgress][]> {
     return [];
   }
 }
+
+// clearLocal forgets every local save: on sign-out, so the next person to sign in on this phone
+// never has someone else's positions pushed as theirs.
+export async function clearLocal(): Promise<void> {
+  try {
+    const keys = (await AsyncStorage.getAllKeys()).filter((k) => k.startsWith(PREFIX));
+    await AsyncStorage.multiRemove(keys);
+  } catch {
+    // Storage unavailable: nothing we can remove.
+  }
+}

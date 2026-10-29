@@ -32,7 +32,7 @@ func listMedia(repo media.Repository) HandlerE {
 		}
 
 		// The database filters; an unknown actor is a valid filter that just matches nothing.
-		items, err := repo.List(r.Context(), media.ListFilter{Kind: kind, Actor: actor})
+		items, err := repo.List(r.Context(), currentUser(r).ID, media.ListFilter{Kind: kind, Actor: actor})
 		if err != nil {
 			return err
 		}
@@ -45,7 +45,7 @@ func listMedia(repo media.Repository) HandlerE {
 func getMedia(repo media.Repository) HandlerE {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		id := r.PathValue("id")
-		m, err := repo.Get(r.Context(), id)
+		m, err := repo.Get(r.Context(), currentUser(r).ID, id)
 		if errors.Is(err, media.ErrNotFound) {
 			return notFoundError("media %s not found", id)
 		}

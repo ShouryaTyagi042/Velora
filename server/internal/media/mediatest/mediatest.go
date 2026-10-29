@@ -18,6 +18,13 @@ type Store interface {
 	media.Syncer
 }
 
+// The users the suite reads and saves progress as. A store backed by a database must have them:
+// open creates users with ids 1 and 2.
+const (
+	alice int64 = 1
+	bob   int64 = 2
+)
+
 // t0 is the first scan's time; later scans add to it.
 var t0 = time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 
@@ -107,7 +114,7 @@ func Run(t *testing.T, open func(t *testing.T) Store) {
 	t.Run("get", func(t *testing.T) {
 		s := seeded(t)
 		m := byTitle(t, s, "Watchmen")
-		got, err := s.Get(ctx, m.ID)
+		got, err := s.Get(ctx, alice, m.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -117,7 +124,7 @@ func Run(t *testing.T, open func(t *testing.T) Store) {
 		if got.RelPath != "comics/Watchmen" || got.AddedAt.IsZero() {
 			t.Errorf("RelPath = %q, AddedAt = %v", got.RelPath, got.AddedAt)
 		}
-		if _, err := s.Get(ctx, "999999"); !errors.Is(err, media.ErrNotFound) {
+		if _, err := s.Get(ctx, alice, "999999"); !errors.Is(err, media.ErrNotFound) {
 			t.Errorf("Get(unknown) = %v, want ErrNotFound", err)
 		}
 	})
@@ -141,7 +148,7 @@ func Run(t *testing.T, open func(t *testing.T) Store) {
 	t.Run("manual actor survives a rescan", func(t *testing.T) {
 		s := seeded(t)
 		matrix := byTitle(t, s, "The Matrix")
-		got, err := s.AddActor(ctx, matrix.ID, "Carrie-Anne Moss")
+		got, err := s.AddActor(ctx, alice, matrix.ID, "Carrie-Anne Moss")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -166,12 +173,12 @@ func Run(t *testing.T, open func(t *testing.T) Store) {
 		s := seeded(t)
 		matrix := byTitle(t, s, "The Matrix")
 		for range 2 {
-			if _, err := s.AddActor(ctx, matrix.ID, "Carrie-Anne Moss"); err != nil {
+			if _, err := s.AddActor(ctx, alice, matrix.ID, "Carrie-Anne Moss"); err != nil {
 				t.Fatal(err)
 			}
 		}
 		// Adding the folder actor by hand changes nothing: the folder link stays.
-		got, err := s.AddActor(ctx, matrix.ID, "Keanu Reeves")
+		got, err := s.AddActor(ctx, alice, matrix.ID, "Keanu Reeves")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -188,7 +195,7 @@ func Run(t *testing.T, open func(t *testing.T) Store) {
 		if _, err := s.Sync(ctx, []media.Media{loose}, t0); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.AddActor(ctx, byTitle(t, s, "Loose Clip").ID, "Keanu Reeves"); err != nil {
+		if _, err := s.AddActor(ctx, alice, byTitle(t, s, "Loose Clip").ID, "Keanu Reeves"); err != nil {
 			t.Fatal(err)
 		}
 		// The same file now reports a folder actor of the same name (same fingerprint).
@@ -207,10 +214,10 @@ func Run(t *testing.T, open func(t *testing.T) Store) {
 
 	t.Run("add actor errors", func(t *testing.T) {
 		s := seeded(t)
-		if _, err := s.AddActor(ctx, byTitle(t, s, "Watchmen").ID, "Alan Moore"); !errors.Is(err, media.ErrNotVideo) {
+		if _, err := s.AddActor(ctx, alice, byTitle(t, s, "Watchmen").ID, "Alan Moore"); !errors.Is(err, media.ErrNotVideo) {
 			t.Errorf("AddActor(comic) = %v, want ErrNotVideo", err)
 		}
-		if _, err := s.AddActor(ctx, "999999", "Keanu Reeves"); !errors.Is(err, media.ErrNotFound) {
+		if _, err := s.AddActor(ctx, alice, "999999", "Keanu Reeves"); !errors.Is(err, media.ErrNotFound) {
 			t.Errorf("AddActor(unknown) = %v, want ErrNotFound", err)
 		}
 	})
@@ -218,7 +225,7 @@ func Run(t *testing.T, open func(t *testing.T) Store) {
 	t.Run("remove actor", func(t *testing.T) {
 		s := seeded(t)
 		matrix := byTitle(t, s, "The Matrix")
-		if _, err := s.AddActor(ctx, matrix.ID, "Carrie-Anne Moss"); err != nil {
+		if _, err := s.AddActor(ctx, alice, matrix.ID, "Carrie-Anne Moss"); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.RemoveActor(ctx, matrix.ID, "Carrie-Anne Moss"); err != nil {
@@ -247,7 +254,7 @@ func Run(t *testing.T, open func(t *testing.T) Store) {
 		if res.Missing != 1 {
 			t.Errorf("Missing = %d, want 1", res.Missing)
 		}
-		if _, err := s.Get(ctx, matrix.ID); !errors.Is(err, media.ErrNotFound) {
+		if _, err := s.Get(ctx, alice, matrix.ID); !errors.Is(err, media.ErrNotFound) {
 			t.Errorf("Get(missing) = %v, want ErrNotFound", err)
 		}
 		actors(t, s, []media.ActorCount{count("Keanu Reeves", 1), count("Matthew McConaughey", 1)})
@@ -267,23 +274,49 @@ func Run(t *testing.T, open func(t *testing.T) Store) {
 		newer := media.Progress{PositionMs: 60_000, DurationMs: 600_000, UpdatedAt: t0.Add(2 * time.Second)}
 		older := media.Progress{PositionMs: 50_000, DurationMs: 600_000, UpdatedAt: t0.Add(time.Second)}
 
-		if got, err := s.SaveProgress(ctx, matrix.ID, newer); err != nil || !sameProgress(got, newer) {
+		if got, err := s.SaveProgress(ctx, alice, matrix.ID, newer); err != nil || !sameProgress(got, newer) {
 			t.Fatalf("first save = %+v, %v", got, err)
 		}
 		// The older save arrives last (two requests in flight): it's accepted but ignored.
-		if got, err := s.SaveProgress(ctx, matrix.ID, older); err != nil || !sameProgress(got, newer) {
+		if got, err := s.SaveProgress(ctx, alice, matrix.ID, older); err != nil || !sameProgress(got, newer) {
 			t.Errorf("stale save = %+v, %v; want the newer row back", got, err)
 		}
 		// The same save again is harmless: PUT is idempotent.
-		if got, err := s.SaveProgress(ctx, matrix.ID, newer); err != nil || !sameProgress(got, newer) {
+		if got, err := s.SaveProgress(ctx, alice, matrix.ID, newer); err != nil || !sameProgress(got, newer) {
 			t.Errorf("repeated save = %+v, %v", got, err)
 		}
-		got, err := s.Get(ctx, matrix.ID)
+		got, err := s.Get(ctx, alice, matrix.ID)
 		if err != nil || got.Progress == nil || !sameProgress(*got.Progress, newer) {
 			t.Errorf("Get progress = %+v, %v", got.Progress, err)
 		}
-		if _, err := s.SaveProgress(ctx, "999999", newer); !errors.Is(err, media.ErrNotFound) {
+		if _, err := s.SaveProgress(ctx, alice, "999999", newer); !errors.Is(err, media.ErrNotFound) {
 			t.Errorf("SaveProgress(unknown) = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("progress is per user", func(t *testing.T) {
+		s := seeded(t)
+		matrix := byTitle(t, s, "The Matrix")
+		p := media.Progress{PositionMs: 60_000, DurationMs: 600_000, UpdatedAt: t0.Add(time.Second)}
+		if _, err := s.SaveProgress(ctx, alice, matrix.ID, p); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := s.Get(ctx, bob, matrix.ID); err != nil || got.Progress != nil {
+			t.Errorf("bob sees alice's progress: %+v, %v", got.Progress, err)
+		}
+		if got, _ := s.Continue(ctx, bob, media.KindVideo, 10); len(got) != 0 {
+			t.Errorf("bob's Continue = %v, want empty", titles(got))
+		}
+		if got, err := s.Get(ctx, 0, matrix.ID); err != nil || got.Progress != nil {
+			t.Errorf("user 0 got progress: %+v, %v", got.Progress, err)
+		}
+		// Bob's own save doesn't touch alice's.
+		bobs := media.Progress{PositionMs: 5_000, DurationMs: 600_000, UpdatedAt: t0.Add(time.Hour)}
+		if _, err := s.SaveProgress(ctx, bob, matrix.ID, bobs); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := s.Get(ctx, alice, matrix.ID); got.Progress == nil || got.Progress.PositionMs != 60_000 {
+			t.Errorf("alice's progress after bob's save = %+v", got.Progress)
 		}
 	})
 
@@ -291,7 +324,7 @@ func Run(t *testing.T, open func(t *testing.T) Store) {
 		s := seeded(t)
 		save := func(title string, p media.Progress) {
 			t.Helper()
-			if _, err := s.SaveProgress(ctx, byTitle(t, s, title).ID, p); err != nil {
+			if _, err := s.SaveProgress(ctx, alice, byTitle(t, s, title).ID, p); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -300,7 +333,7 @@ func Run(t *testing.T, open func(t *testing.T) Store) {
 		save("Interstellar", media.Progress{PositionMs: 599_000, DurationMs: 600_000, Completed: true, UpdatedAt: t0.Add(4 * time.Second)})
 		save("Watchmen", media.Progress{Page: 1, PageCount: 2, UpdatedAt: t0.Add(2 * time.Second)})
 
-		watching, err := s.Continue(ctx, media.KindVideo, 10)
+		watching, err := s.Continue(ctx, alice, media.KindVideo, 10)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -310,14 +343,14 @@ func Run(t *testing.T, open func(t *testing.T) Store) {
 		if watching[0].Progress == nil || watching[0].Progress.PositionMs != 2000 {
 			t.Errorf("Continue items carry their progress: %+v", watching[0].Progress)
 		}
-		if one, _ := s.Continue(ctx, media.KindVideo, 1); len(one) != 1 {
+		if one, _ := s.Continue(ctx, alice, media.KindVideo, 1); len(one) != 1 {
 			t.Errorf("limit 1 returned %d", len(one))
 		}
-		reading, err := s.Continue(ctx, media.KindComic, 10)
+		reading, err := s.Continue(ctx, alice, media.KindComic, 10)
 		if err != nil || !slices.Equal(titles(reading), []string{"Watchmen"}) || reading[0].Progress.Page != 1 {
 			t.Errorf("Continue(comic) = %v, %v", titles(reading), err)
 		}
-		if empty, _ := s.Continue(ctx, media.KindComic, 10); empty == nil {
+		if empty, _ := s.Continue(ctx, alice, media.KindComic, 10); empty == nil {
 			t.Error("Continue must return [] rather than nil")
 		}
 	})
@@ -325,7 +358,7 @@ func Run(t *testing.T, open func(t *testing.T) Store) {
 	t.Run("actor folder rename", func(t *testing.T) {
 		s := seeded(t)
 		old := byTitle(t, s, "The Matrix")
-		if _, err := s.AddActor(ctx, old.ID, "Carrie-Anne Moss"); err != nil {
+		if _, err := s.AddActor(ctx, alice, old.ID, "Carrie-Anne Moss"); err != nil {
 			t.Fatal(err)
 		}
 		lib := Library()
@@ -351,7 +384,7 @@ func sameProgress(a, b media.Progress) bool {
 
 func list(t *testing.T, s Store, f media.ListFilter) []media.Media {
 	t.Helper()
-	got, err := s.List(context.Background(), f)
+	got, err := s.List(context.Background(), alice, f)
 	if err != nil {
 		t.Fatalf("List(%+v): %v", f, err)
 	}

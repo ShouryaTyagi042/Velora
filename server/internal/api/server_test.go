@@ -23,8 +23,10 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// newTestHandler is the API over a small library, with every request signed in as testUser
+// (see signedInHandler). auth_test.go tests what happens without a session.
 func newTestHandler() http.Handler {
-	return NewHandler(memstore.New([]media.Media{
+	return signedInHandler(memstore.New([]media.Media{
 		{ID: "v1", Title: "The Matrix", Kind: media.KindVideo, RelPath: "movies/secret-dir/The Matrix.mp4",
 			Actors: []media.ActorTag{{Name: "Keanu Reeves", Source: media.ActorFromFolder}}},
 		{ID: "v2", Title: "Interstellar", Kind: media.KindVideo, RelPath: "movies/secret-dir/Interstellar.mp4",
@@ -168,7 +170,7 @@ func TestScanEndpoint(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	NewHandler(failingRepo{}, fakeRescanner{err: errors.New("open /Users/x/media: permission denied")}, fstest.MapFS{}, fstest.MapFS{}).
+	signedInHandler(failingRepo{}, fakeRescanner{err: errors.New("open /Users/x/media: permission denied")}, fstest.MapFS{}, fstest.MapFS{}).
 		ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/scan", nil))
 	if rec.Code != 500 || strings.Contains(rec.Body.String(), "/Users/") {
 		t.Errorf("scan failure: got %d %s, want a 500 that hides the path", rec.Code, rec.Body)
@@ -179,17 +181,17 @@ func TestScanEndpoint(t *testing.T) {
 // override panic (nil embedded interface), which Recover turns into a 500.
 type failingRepo struct{ media.Repository }
 
-func (failingRepo) List(ctx context.Context, f media.ListFilter) ([]media.Media, error) {
+func (failingRepo) List(ctx context.Context, user int64, f media.ListFilter) ([]media.Media, error) {
 	return nil, errors.New(`pq: relation "media" does not exist`)
 }
 
-func (failingRepo) Get(ctx context.Context, id string) (media.Media, error) {
+func (failingRepo) Get(ctx context.Context, user int64, id string) (media.Media, error) {
 	return media.Media{}, errors.New("disk on fire")
 }
 
 func TestInternalErrorsAreNotLeaked(t *testing.T) {
 	rec := httptest.NewRecorder()
-	NewHandler(failingRepo{}, fakeRescanner{}, fstest.MapFS{}, fstest.MapFS{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/media", nil))
+	signedInHandler(failingRepo{}, fakeRescanner{}, fstest.MapFS{}, fstest.MapFS{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/media", nil))
 
 	if rec.Code != 500 {
 		t.Fatalf("status = %d, want 500", rec.Code)
@@ -216,7 +218,7 @@ func TestRecoverTurnsPanicInto500(t *testing.T) {
 func TestVideoThumbnail(t *testing.T) {
 	rec := httptest.NewRecorder()
 	newTestHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/media/v2/thumbnail", nil))
-	if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/jpeg" || rec.Header().Get("Cache-Control") != "public, max-age=86400" {
+	if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/jpeg" || rec.Header().Get("Cache-Control") != "private, max-age=86400" {
 		t.Errorf("ready: got %d %v", rec.Code, rec.Header())
 	}
 

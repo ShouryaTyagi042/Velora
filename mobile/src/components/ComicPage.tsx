@@ -11,6 +11,7 @@ import {
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 
+import { authHeaders } from "@/api/client";
 import { onMedia } from "@/theme";
 
 const MAX_SCALE = 5;
@@ -106,7 +107,7 @@ export function ComicPage({ uri, width, height, zoomed, onZoomChange, onTap, lab
       <Animated.View style={[{ width, height }, styles.page]} accessible accessibilityLabel={label}>
         <Animated.View style={[StyleSheet.absoluteFill, style]}>
           {/* expo-image: disk cache that honours Cache-Control, and a short fade instead of a pop. */}
-          <Image source={{ uri }} style={StyleSheet.absoluteFill} contentFit="contain" transition={120} recyclingKey={uri} />
+          <Image source={{ uri, headers: authHeaders() }} style={StyleSheet.absoluteFill} contentFit="contain" transition={120} recyclingKey={uri} />
         </Animated.View>
       </Animated.View>
     </GestureDetector>

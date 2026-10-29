@@ -48,7 +48,7 @@ func newStreamHandler(serve contentServer) http.Handler {
 	}
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/media/{id}/stream", streamVideo(repo, files, serve))
-	return mux
+	return asUser(mux) // the stream handler alone, without NewHandler's session check
 }
 
 func stream(t *testing.T, serve contentServer, method string, headers map[string]string) *httptest.ResponseRecorder {

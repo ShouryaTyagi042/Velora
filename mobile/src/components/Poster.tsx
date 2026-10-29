@@ -2,6 +2,7 @@ import { Image } from "expo-image";
 import { useState } from "react";
 import { StyleSheet, View, type StyleProp, type ViewStyle } from "react-native";
 
+import { authHeaders } from "@/api/client";
 import { MediaKind, thumbnailUrl, type Media } from "@/api/media";
 import { motion, onMedia, radius, useAppTheme } from "@/theme";
 import { Icon } from "./Icon";
@@ -33,7 +34,7 @@ export function Poster({ media, style, children }: Props) {
       )}
       {uri && failed !== uri && (
         <Image
-          source={{ uri }}
+          source={{ uri, headers: authHeaders() }}
           style={StyleSheet.absoluteFill}
           contentFit="cover"
           transition={motion.fast}
