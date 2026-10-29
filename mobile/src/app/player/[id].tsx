@@ -1,21 +1,24 @@
+import { useEventListener } from "expo";
 import { Stack, useLocalSearchParams } from "expo-router";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
-import { getMedia, MediaKind, streamUrl, type Media } from "@/api/media";
+import { MediaKind, streamUrl, type Media } from "@/api/media";
 import { ErrorView } from "@/components/ErrorView";
 import { Loading } from "@/components/Loading";
 import { PlayerControls } from "@/components/PlayerControls";
 import { useAsync } from "@/hooks/useAsync";
 import { PlaybackError, usePlayerStatus } from "@/hooks/usePlayerStatus";
 import { formatDuration } from "@/lib/format";
+import { loadWithProgress, resumeAt } from "@/progress/resume";
+import { useProgressSync } from "@/progress/useProgressSync";
 
 // The player screen fetches the media first: a bad id becomes a "Not found" from the API
-// instead of a stream the native player can't explain.
+// instead of a stream the native player can't explain. It also says where to resume.
 export default function PlayerScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const fetcher = useCallback((signal: AbortSignal) => getMedia(id, { signal }), [id]);
+  const fetcher = useCallback((signal: AbortSignal) => loadWithProgress(id, signal), [id]);
   const { state, refetch } = useAsync(fetcher);
 
   if (state.status === "loading") return <Loading />;
@@ -33,9 +36,28 @@ function Player({ media }: { media: Media }) {
   // staysActiveInBackground false the player pauses when the app is backgrounded.
   const player = useVideoPlayer(source, (p) => {
     p.timeUpdateEventInterval = 0.5; // 0 means no timeUpdate events at all
+    p.currentTime = resumeAt(media); // seek before play, so the start isn't heard first
     p.play();
   });
   const s = usePlayerStatus(player);
+
+  // Progress: throttled saves while playing; immediate ones on pause, seek, leaving the screen
+  // and backgrounding (the last two inside useProgressSync). Never while loading or buffering:
+  // the position then is where the player is stuck, not where you are.
+  const sync = useProgressSync(media.id);
+  const position = (seconds: number) => ({
+    positionMs: Math.round(seconds * 1000),
+    durationMs: Math.round(player.duration * 1000),
+  });
+  useEventListener(player, "timeUpdate", ({ currentTime }) => {
+    if (player.playing && player.status === "readyToPlay" && player.duration > 0) sync.save(position(currentTime));
+  });
+  useEventListener(player, "playingChange", ({ isPlaying }) => {
+    if (!isPlaying && player.duration > 0) sync.save(position(player.currentTime), { force: true });
+  });
+  const onSeek = (to: number) => {
+    if (player.duration > 0) sync.save(position(to), { force: true });
+  };
   const videoRef = useRef<VideoView>(null);
 
   // Fullscreen is the OS's player, and on iOS it keeps whatever nativeControls the inline view had:
@@ -68,7 +90,7 @@ function Player({ media }: { media: Media }) {
             fullscreenOptions={{ enable: true }}
             onFullscreenExit={() => setFullscreen(false)}
           />
-          {!fullscreen && <PlayerControls player={player} status={s} onFullscreen={() => setFullscreen(true)} />}
+          {!fullscreen && <PlayerControls player={player} status={s} onFullscreen={() => setFullscreen(true)} onSeek={onSeek} />}
         </View>
       )}
 

@@ -1,7 +1,9 @@
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from "expo-router";
+import { useEffect } from "react";
 import { StyleSheet, useColorScheme } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
+import { reconcile } from "@/progress/sync";
 import { ReaderSettingsProvider } from "@/reader/settings";
 
 // The Stack is the OS's navigation: push slides a screen in, back (button, swipe, Android
@@ -9,6 +11,10 @@ import { ReaderSettingsProvider } from "@/reader/settings";
 // GestureHandlerRootView must wrap everything that uses gestures (the reader's pinch-zoom).
 export default function RootLayout() {
   const scheme = useColorScheme();
+  // Push any progress a previous session saved locally but never got to the server.
+  useEffect(() => {
+    void reconcile();
+  }, []);
   return (
     <GestureHandlerRootView style={styles.root}>
       <ThemeProvider value={scheme === "dark" ? DarkTheme : DefaultTheme}>

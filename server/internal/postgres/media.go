@@ -41,18 +41,22 @@ select m.id, m.fingerprint, m.kind, m.title, m.rel_path, coalesce(m.mime_type, '
        m.mod_time, m.added_at, cm.page_count, cm.pages,
        vm.extracted_at is not null, coalesce(vm.duration_ms, 0), coalesce(vm.width, 0),
        coalesce(vm.height, 0), coalesce(vm.codec, ''), coalesce(vm.fps, 0)::float8,
+       coalesce(wp.updated_at, rp.updated_at), coalesce(wp.position_ms, 0), coalesce(wp.duration_ms, 0),
+       coalesce(rp.page, 0), coalesce(rp.page_count, 0), coalesce(wp.completed, rp.completed, false),
        coalesce(json_agg(json_build_object('name', a.name, 'source', ma.source)
                          order by ma.source = 'manual', a.name)
                   filter (where a.id is not null), '[]')
 from media m
 left join comic_metadata cm on cm.media_id = m.id
 left join video_metadata vm on vm.media_id = m.id
+left join watch_progress wp   on wp.media_id = m.id and wp.user_id = 1  -- one user until phase 11
+left join reading_progress rp on rp.media_id = m.id and rp.user_id = 1
 left join media_actors ma   on ma.media_id = m.id
 left join actors a          on a.id = ma.actor_id
 where m.missing_since is null`
 
 const groupMedia = `
-group by m.id, cm.media_id, vm.media_id`
+group by m.id, cm.media_id, vm.media_id, wp.user_id, wp.media_id, rp.user_id, rp.media_id`
 
 // List implements media.Repository. Both filters run in SQL. The actor filter is an exists, not a
 // join, so the aggregate still sees every actor of a matching video.
@@ -106,11 +110,14 @@ func (r *MediaRepo) scanMedia(row interface{ Scan(...any) error }) (media.Media,
 		pages     []string
 		extracted bool
 		v         media.VideoMeta
+		saved     sql.NullTime
+		p         media.Progress
 		actors    []byte
 	)
 	err := row.Scan(&id, &m.Fingerprint, &m.Kind, &m.Title, &m.RelPath, &m.MimeType, &m.SizeBytes,
 		&m.ModTime, &m.AddedAt, &pageCount, r.types.SQLScanner(&pages),
-		&extracted, &v.DurationMs, &v.Width, &v.Height, &v.Codec, &v.FPS, &actors)
+		&extracted, &v.DurationMs, &v.Width, &v.Height, &v.Codec, &v.FPS,
+		&saved, &p.PositionMs, &p.DurationMs, &p.Page, &p.PageCount, &p.Completed, &actors)
 	if err != nil {
 		return media.Media{}, err
 	}
@@ -120,6 +127,10 @@ func (r *MediaRepo) scanMedia(row interface{ Scan(...any) error }) (media.Media,
 	}
 	if extracted {
 		m.Video = &v
+	}
+	if saved.Valid {
+		p.UpdatedAt = saved.Time
+		m.Progress = &p
 	}
 	if err := json.Unmarshal(actors, &m.Actors); err != nil {
 		return media.Media{}, fmt.Errorf("media %d actors: %w", id, err)
@@ -141,8 +152,8 @@ func (r *MediaRepo) Sync(ctx context.Context, items []media.Media, scannedAt tim
 		}
 		res.Upserted = len(items)
 
-		// Anything this scan didn't touch is gone from disk. Mark it, don't delete it: manual actors
-		// (and, later, progress) point at it, and a disconnected drive shouldn't wipe them.
+		// Anything this scan didn't touch is gone from disk. Mark it, don't delete it: progress
+		// rows point at it, and a disconnected drive shouldn't wipe your watch history.
 		out, err := tx.ExecContext(ctx, `
 			update media set missing_since = $1
 			where last_seen_at < $1 and missing_since is null`, scannedAt)

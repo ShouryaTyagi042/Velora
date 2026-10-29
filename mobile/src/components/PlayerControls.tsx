@@ -21,12 +21,13 @@ type Props = {
   player: VideoPlayer;
   status: PlayerStatus;
   onFullscreen: () => void;
+  onSeek?: (to: number) => void; // after every seek or skip, with the target in seconds
 };
 
 // PlayerControls is the overlay on the video: ±10 s and play/pause in the middle, time, seek bar and
 // fullscreen at the bottom, all on glass. Tap the video to show or hide them; while playing they
 // hide after 3 s without a touch. Paused or ended, they stay.
-export function PlayerControls({ player, status: s, onFullscreen }: Props) {
+export function PlayerControls({ player, status: s, onFullscreen, onSeek }: Props) {
   const reduceMotion = useReducedMotion();
 
   const [visible, setVisible] = useState(true);
@@ -76,8 +77,10 @@ export function PlayerControls({ player, status: s, onFullscreen }: Props) {
   };
   const skip = (by: number) => {
     touch();
-    setSeekTarget(Math.min(Math.max(0, time + by), s.duration));
+    const to = Math.min(Math.max(0, time + by), s.duration);
+    setSeekTarget(to);
     player.seekBy(by);
+    onSeek?.(to);
   };
   const seekTo = (to: number) => {
     setScrubbing(false);
@@ -85,6 +88,7 @@ export function PlayerControls({ player, status: s, onFullscreen }: Props) {
     // A new Range request: watch for the 206 in the server log. seekBy rather than assigning
     // currentTime, which the React Compiler rejects as mutating a prop.
     player.seekBy(to - player.currentTime);
+    onSeek?.(to);
     touch();
   };
 

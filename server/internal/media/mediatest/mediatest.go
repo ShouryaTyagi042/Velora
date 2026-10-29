@@ -261,6 +261,67 @@ func Run(t *testing.T, open func(t *testing.T) Store) {
 		}
 	})
 
+	t.Run("progress: the newer save wins", func(t *testing.T) {
+		s := seeded(t)
+		matrix := byTitle(t, s, "The Matrix")
+		newer := media.Progress{PositionMs: 60_000, DurationMs: 600_000, UpdatedAt: t0.Add(2 * time.Second)}
+		older := media.Progress{PositionMs: 50_000, DurationMs: 600_000, UpdatedAt: t0.Add(time.Second)}
+
+		if got, err := s.SaveProgress(ctx, matrix.ID, newer); err != nil || !sameProgress(got, newer) {
+			t.Fatalf("first save = %+v, %v", got, err)
+		}
+		// The older save arrives last (two requests in flight): it's accepted but ignored.
+		if got, err := s.SaveProgress(ctx, matrix.ID, older); err != nil || !sameProgress(got, newer) {
+			t.Errorf("stale save = %+v, %v; want the newer row back", got, err)
+		}
+		// The same save again is harmless: PUT is idempotent.
+		if got, err := s.SaveProgress(ctx, matrix.ID, newer); err != nil || !sameProgress(got, newer) {
+			t.Errorf("repeated save = %+v, %v", got, err)
+		}
+		got, err := s.Get(ctx, matrix.ID)
+		if err != nil || got.Progress == nil || !sameProgress(*got.Progress, newer) {
+			t.Errorf("Get progress = %+v, %v", got.Progress, err)
+		}
+		if _, err := s.SaveProgress(ctx, "999999", newer); !errors.Is(err, media.ErrNotFound) {
+			t.Errorf("SaveProgress(unknown) = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("continue", func(t *testing.T) {
+		s := seeded(t)
+		save := func(title string, p media.Progress) {
+			t.Helper()
+			if _, err := s.SaveProgress(ctx, byTitle(t, s, title).ID, p); err != nil {
+				t.Fatal(err)
+			}
+		}
+		save("The Matrix", media.Progress{PositionMs: 1000, DurationMs: 600_000, UpdatedAt: t0.Add(1 * time.Second)})
+		save("John Wick", media.Progress{PositionMs: 2000, DurationMs: 600_000, UpdatedAt: t0.Add(3 * time.Second)})
+		save("Interstellar", media.Progress{PositionMs: 599_000, DurationMs: 600_000, Completed: true, UpdatedAt: t0.Add(4 * time.Second)})
+		save("Watchmen", media.Progress{Page: 1, PageCount: 2, UpdatedAt: t0.Add(2 * time.Second)})
+
+		watching, err := s.Continue(ctx, media.KindVideo, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := titles(watching); !slices.Equal(got, []string{"John Wick", "The Matrix"}) {
+			t.Errorf("Continue(video) = %v, want John Wick, The Matrix (newest first, finished excluded)", got)
+		}
+		if watching[0].Progress == nil || watching[0].Progress.PositionMs != 2000 {
+			t.Errorf("Continue items carry their progress: %+v", watching[0].Progress)
+		}
+		if one, _ := s.Continue(ctx, media.KindVideo, 1); len(one) != 1 {
+			t.Errorf("limit 1 returned %d", len(one))
+		}
+		reading, err := s.Continue(ctx, media.KindComic, 10)
+		if err != nil || !slices.Equal(titles(reading), []string{"Watchmen"}) || reading[0].Progress.Page != 1 {
+			t.Errorf("Continue(comic) = %v, %v", titles(reading), err)
+		}
+		if empty, _ := s.Continue(ctx, media.KindComic, 10); empty == nil {
+			t.Error("Continue must return [] rather than nil")
+		}
+	})
+
 	t.Run("actor folder rename", func(t *testing.T) {
 		s := seeded(t)
 		old := byTitle(t, s, "The Matrix")
@@ -280,6 +341,12 @@ func Run(t *testing.T, open func(t *testing.T) Store) {
 			t.Errorf("renamed actors = %v, want %v (manual actors stay on the old record, ADR 013)", renamed.Actors, want)
 		}
 	})
+}
+
+// sameProgress compares progress ignoring the time's location (a database returns its own).
+func sameProgress(a, b media.Progress) bool {
+	return a.UpdatedAt.Equal(b.UpdatedAt) && a.PositionMs == b.PositionMs && a.DurationMs == b.DurationMs &&
+		a.Page == b.Page && a.PageCount == b.PageCount && a.Completed == b.Completed
 }
 
 func list(t *testing.T, s Store, f media.ListFilter) []media.Media {

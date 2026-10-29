@@ -21,6 +21,9 @@ func NewHandler(repo media.Repository, lib Rescanner, files, thumbs fs.FS) http.
 	mux.Handle("POST /api/media/{id}/actors", addActor(repo))
 	mux.Handle("DELETE /api/media/{id}/actors/{name}", removeActor(repo))
 	mux.Handle("GET /api/actors", listActors(repo))
+	mux.Handle("PUT /api/media/{id}/progress", putProgress(repo))
+	mux.Handle("GET /api/media/{id}/progress", getProgress(repo))
+	mux.Handle("GET /api/continue", getContinue(repo))
 	mux.Handle("GET /api/media/{id}/thumbnail", getThumbnail(repo, files, thumbs))
 	mux.Handle("GET /api/media/{id}/stream", streamVideo(repo, files, http.ServeContent)) // GET patterns also match HEAD
 	mux.Handle("GET /api/media/{id}/pages", listPages(repo))

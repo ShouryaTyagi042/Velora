@@ -60,7 +60,7 @@ The folder structure is data (ADR 013 in the curriculum):
   subfolder inside a comic produces a scan warning, not a failure.
 - Folder names are case-sensitive: `Movies/` is not `movies/`.
 - Symlinks are not followed.
-- Each item is recognised by a hash of its path, so renaming a file or folder makes it a new item (new id, no manual actors); the old one is marked missing, not deleted.
+- Each item is recognised by a hash of its path, so renaming a file or folder makes it a new item (new id, no progress, no manual actors); the old one is marked missing, not deleted.
 
 ## API
 
@@ -79,6 +79,9 @@ Every response is JSON (`Content-Type: application/json; charset=utf-8`) and car
 | `POST /api/media/{id}/actors` | `200 Media` with the actor added; adding one it already has is a no-op `200`. Body `{"name":"Carrie-Anne Moss"}`, 1–100 characters after trimming | `400 validation` (bad body, or a comic), `404 not_found` |
 | `DELETE /api/media/{id}/actors/{name}` | `204` | `404 not_found` (no such link), `409 conflict` for a folder actor (rename the folder instead) |
 | `GET /api/actors` | `200 {"items":[{"name":"Keanu Reeves","videoCount":2}]}`: available videos per actor, both sources | |
+| `PUT /api/media/{id}/progress` | `200 Progress` as stored. Body: `{"positionMs","durationMs","clientTs"}` for a video, `{"page","pageCount","clientTs"}` for a comic. A save older (by `clientTs`) than the stored one is accepted and ignored | `400 validation`, `404 not_found` |
+| `GET /api/media/{id}/progress` | `200 Progress` | `404 not_found` if never started |
+| `GET /api/continue` | `200 {"watching":[Media],"reading":[Media]}`: unfinished, newest first, 10 each | |
 | `GET` or `HEAD /api/media/{id}/stream` | `200` whole video, or `206 Partial Content` for a `Range: bytes=…` request (seeking); `304` for a matching `If-Modified-Since`. `Content-Type` comes from the file's extension; `Accept-Ranges: bytes` on every response | `404 not_found` for an unknown id, a comic, or a file deleted since the last scan; `416` for a range past the end |
 | `POST /api/scan` | `200 {"found":6,"warnings":[...]}` after rescanning `VELORA_MEDIA_DIR`; blocks until done | `500 internal` if the folder can't be read |
 
@@ -90,14 +93,16 @@ Any other method on a known path returns `405`. Unknown paths return the mux's p
 { "id": "7", "title": "The Matrix", "kind": "video", "mimeType": "video/mp4",
   "sizeBytes": 2147483648, "modTime": "2026-10-04T00:00:00Z", "addedAt": "2026-10-04T00:00:00Z",
   "actors": [{ "name": "Keanu Reeves", "source": "folder" }, { "name": "Carrie-Anne Moss", "source": "manual" }],
-  "video": { "durationMs": 8160000, "width": 1920, "height": 800, "codec": "h264", "fps": 23.976 } }
+  "video": { "durationMs": 8160000, "width": 1920, "height": 800, "codec": "h264", "fps": 23.976 },
+  "progress": { "positionMs": 2530000, "durationMs": 8160000, "completed": false, "updatedAt": "2026-10-28T21:14:03Z" } }
 
 { "id": "12", "title": "Watchmen", "kind": "comic",
   "sizeBytes": 18874368, "modTime": "2026-10-04T00:00:00Z", "addedAt": "2026-10-04T00:00:00Z",
-  "comic": { "pageCount": 24 } }
+  "comic": { "pageCount": 24 },
+  "progress": { "page": 11, "pageCount": 24, "completed": false, "updatedAt": "2026-10-28T21:20:00Z" } }
 ```
 
-`actors` appears only on videos that have one: `folder` actors come from the folder layout and change only by renaming it; `manual` ones are added in the app and survive rescans. `video` appears once the extractor has run. `comic` appears only on comics. File paths and page filenames are never sent; clients refer to media by `id` only.
+`actors` appears only on videos that have one: `folder` actors come from the folder layout and change only by renaming it; `manual` ones are added in the app and survive rescans. `video` appears once the extractor has run, `progress` once the item was started (`completed` is decided by the server: 95% of a video, or a comic's last page). `comic` appears only on comics. File paths and page filenames are never sent; clients refer to media by `id` only.
 
 ### Errors
 

@@ -10,6 +10,7 @@ import { Loading } from "@/components/Loading";
 import { Poster } from "@/components/Poster";
 import { useAsync } from "@/hooks/useAsync";
 import { formatBytes, formatDate, formatDuration, formatResolution } from "@/lib/format";
+import { resumeAt, resumePage } from "@/progress/resume";
 
 export default function Details() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -30,6 +31,17 @@ function MediaDetails({ media: initial }: { media: Media }) {
   const actors = media.actors ?? []; // omitted from the JSON when there are none
   const open = () => router.push({ pathname: isVideo ? "/player/[id]" : "/reader/[id]", params: { id: media.id } });
 
+  // The main action says where it will take you.
+  const at = resumeAt(media);
+  const page = resumePage(media);
+  const action = isVideo
+    ? at > 0
+      ? `Resume from ${formatDuration(at)}`
+      : "Play"
+    : page > 0
+      ? `Continue on page ${page + 1}`
+      : "Read";
+
   return (
     <ScrollView contentContainerStyle={styles.content}>
       <Stack.Screen options={{ title: media.title }} />
@@ -38,7 +50,7 @@ function MediaDetails({ media: initial }: { media: Media }) {
       <Pressable
         onPress={open}
         accessibilityRole="button"
-        accessibilityLabel={`${isVideo ? "Play" : "Read"} ${media.title}`}
+        accessibilityLabel={`${action}: ${media.title}`}
         style={({ pressed }) => [styles.posterBox, pressed && styles.pressed]}
       >
         <Poster media={media} style={styles.poster} />
@@ -71,7 +83,7 @@ function MediaDetails({ media: initial }: { media: Media }) {
         style={({ pressed }) => [styles.button, { backgroundColor: colors.primary }, pressed && styles.pressed]}
         onPress={open}
       >
-        <Text style={styles.buttonText}>{isVideo ? "Play" : "Read"}</Text>
+        <Text style={styles.buttonText}>{action}</Text>
       </Pressable>
     </ScrollView>
   );

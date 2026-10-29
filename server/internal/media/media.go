@@ -48,6 +48,17 @@ type VideoMeta struct {
 	FPS        float64 `json:"fps"`
 }
 
+// Progress is where you are in one item: a position for a video, a page for a comic.
+// Fields of the other kind are zero and omitted.
+type Progress struct {
+	PositionMs int       `json:"positionMs,omitempty"` // videos
+	DurationMs int       `json:"durationMs,omitempty"`
+	Page       int       `json:"page,omitempty"` // comics, 0-based; absent means page 0
+	PageCount  int       `json:"pageCount,omitempty"`
+	Completed  bool      `json:"completed"`
+	UpdatedAt  time.Time `json:"updatedAt"` // the client's clock when it saved
+}
+
 // Media is one item in the library: a video file or a comic folder.
 type Media struct {
 	ID          string     `json:"id"`
@@ -59,9 +70,10 @@ type Media struct {
 	SizeBytes   int64      `json:"sizeBytes"`
 	ModTime     time.Time  `json:"modTime"`
 	AddedAt     time.Time  `json:"addedAt"`
-	Actors      []ActorTag `json:"actors,omitempty"` // videos only
-	Comic       *ComicMeta `json:"comic,omitempty"`  // comics only
-	Video       *VideoMeta `json:"video,omitempty"`  // videos only, once extracted
+	Actors      []ActorTag `json:"actors,omitempty"`   // videos only
+	Comic       *ComicMeta `json:"comic,omitempty"`    // comics only
+	Video       *VideoMeta `json:"video,omitempty"`    // videos only, once extracted
+	Progress    *Progress  `json:"progress,omitempty"` // once started
 }
 
 // HasActor reports whether any of m's actors is called name.

@@ -26,13 +26,14 @@ type entry struct {
 // Store holds media in a map guarded by a read/write mutex,
 // so readers (handlers) and the writer (a scan) can share it.
 type Store struct {
-	mu    sync.RWMutex
-	items map[string]*entry // by ID
+	mu       sync.RWMutex
+	items    map[string]*entry          // by ID
+	progress map[string]media.Progress // by media ID; one user for now
 }
 
 // New returns a Store seeded with the given media.
 func New(seed []media.Media) *Store {
-	s := &Store{items: make(map[string]*entry, len(seed))}
+	s := &Store{items: make(map[string]*entry, len(seed)), progress: map[string]media.Progress{}}
 	for _, m := range seed {
 		s.items[m.ID] = &entry{m: m}
 	}
@@ -78,7 +79,7 @@ func (s *Store) List(ctx context.Context, f media.ListFilter) ([]media.Media, er
 		if e.missing || (f.Kind != "" && e.m.Kind != f.Kind) || (f.Actor != "" && !e.m.HasActor(f.Actor)) {
 			continue
 		}
-		out = append(out, e.m)
+		out = append(out, s.withProgress(e.m))
 	}
 	s.mu.RUnlock()
 
@@ -100,7 +101,49 @@ func (s *Store) Get(ctx context.Context, id string) (media.Media, error) {
 	if !ok || e.missing {
 		return media.Media{}, media.ErrNotFound
 	}
-	return e.m, nil
+	return s.withProgress(e.m), nil
+}
+
+// withProgress returns m with its saved progress, if any. Callers hold s.mu.
+func (s *Store) withProgress(m media.Media) media.Media {
+	if p, ok := s.progress[m.ID]; ok {
+		m.Progress = &p
+	}
+	return m
+}
+
+// SaveProgress implements media.Repository: the newer save wins.
+func (s *Store) SaveProgress(ctx context.Context, id string, p media.Progress) (media.Progress, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if e, ok := s.items[id]; !ok || e.missing {
+		return media.Progress{}, media.ErrNotFound
+	}
+	if old, ok := s.progress[id]; ok && !old.UpdatedAt.Before(p.UpdatedAt) {
+		return old, nil // stale: an older save arrived after a newer one
+	}
+	s.progress[id] = p
+	return p, nil
+}
+
+// Continue implements media.Repository.
+func (s *Store) Continue(ctx context.Context, kind media.Kind, limit int) ([]media.Media, error) {
+	s.mu.RLock()
+	out := []media.Media{}
+	for id, p := range s.progress {
+		e := s.items[id]
+		if e == nil || e.missing || e.m.Kind != kind || p.Completed {
+			continue
+		}
+		out = append(out, s.withProgress(e.m))
+	}
+	s.mu.RUnlock()
+
+	slices.SortFunc(out, func(a, b media.Media) int {
+		return cmp.Or(b.Progress.UpdatedAt.Compare(a.Progress.UpdatedAt), strings.Compare(a.ID, b.ID))
+	})
+	return out[:min(limit, len(out))], nil
 }
 
 // ListActors counts available videos per actor, both sources.
@@ -140,7 +183,7 @@ func (s *Store) AddActor(ctx context.Context, id, name string) (media.Media, err
 	if !e.m.HasActor(name) { // an existing link, folder or manual, is left as it is
 		e.m.Actors = sortActors(append(slices.Clone(e.m.Actors), media.ActorTag{Name: name, Source: media.ActorManual}))
 	}
-	return e.m, nil
+	return s.withProgress(e.m), nil
 }
 
 // RemoveActor implements media.Repository.

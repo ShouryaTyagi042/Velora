@@ -20,6 +20,13 @@ type Repository interface {
 	// RemoveActor removes a manual actor from a video. ErrNotFound when the video has no actor
 	// by that name, ErrFolderActor when the link comes from the folder.
 	RemoveActor(ctx context.Context, id, name string) error
+
+	// SaveProgress stores p for media id unless the stored progress is newer (by UpdatedAt), and
+	// returns what is stored afterwards. A stale save is not an error: two saves can arrive out of
+	// order, and the newer one must win. ErrNotFound for an unknown id.
+	SaveProgress(ctx context.Context, id string, p Progress) (Progress, error)
+	// Continue returns up to limit items of kind with unfinished progress, most recent first.
+	Continue(ctx context.Context, kind Kind, limit int) ([]Media, error)
 }
 
 // Syncer is what a scan needs: make the stored library match what's on disk.

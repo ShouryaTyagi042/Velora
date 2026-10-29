@@ -27,6 +27,16 @@ export type VideoMeta = {
   fps: number;
 };
 
+// Where you are in an item, as the server stored it. Absent fields are 0.
+export type Progress = {
+  positionMs?: number; // videos
+  durationMs?: number;
+  page?: number; // comics, 0-based
+  pageCount?: number;
+  completed: boolean; // decided by the server
+  updatedAt: string; // the saving device's clock, RFC 3339
+};
+
 export type Media = {
   id: string;
   title: string;
@@ -38,6 +48,7 @@ export type Media = {
   actors?: ActorTag[]; // videos only; absent when there are none
   comic?: { pageCount: number }; // comics only
   video?: VideoMeta; // videos only, once extracted
+  progress?: Progress; // once started
 };
 
 export type ListOptions = { kind?: MediaKind; actor?: string; signal?: AbortSignal };

@@ -5,7 +5,7 @@ import Animated, { useAnimatedStyle, useReducedMotion, withTiming } from "react-
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ApiError } from "@/api/client";
-import { getMedia, MediaKind, pageUrl, type Media } from "@/api/media";
+import { MediaKind, pageUrl, type Media } from "@/api/media";
 import { ComicPage } from "@/components/ComicPage";
 import { ErrorView } from "@/components/ErrorView";
 import { Icon } from "@/components/Icon";
@@ -13,6 +13,8 @@ import { Loading } from "@/components/Loading";
 import { Surface } from "@/components/Surface";
 import { useAsync } from "@/hooks/useAsync";
 import { usePreload } from "@/hooks/usePreload";
+import { loadWithProgress, resumePage } from "@/progress/resume";
+import { useProgressSync } from "@/progress/useProgressSync";
 import { useReaderSettings } from "@/reader/settings";
 
 const FG = "#fff"; // controls sit over pages on a black background; tokens in phase 10b
@@ -20,7 +22,7 @@ const TOUCH = 44;
 
 export default function ReaderScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const fetcher = useCallback((signal: AbortSignal) => getMedia(id, { signal }), [id]);
+  const fetcher = useCallback((signal: AbortSignal) => loadWithProgress(id, signal), [id]);
   const { state, refetch } = useAsync(fetcher);
 
   if (state.status === "loading") return <Loading />;
@@ -38,7 +40,8 @@ function Reader({ comic, pageCount }: { comic: Media; pageCount: number }) {
   const { direction, setDirection } = useReaderSettings();
   const horizontal = direction === "horizontal";
 
-  const [page, setPage] = useState(0);
+  const [page, setPage] = useState(() => resumePage(comic));
+  const sync = useProgressSync(comic.id);
   const [chrome, setChrome] = useState(true); // the top and bottom bars
   const [zoomed, setZoomed] = useState(false);
 
@@ -50,7 +53,10 @@ function Reader({ comic, pageCount }: { comic: Media; pageCount: number }) {
   const onScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const offset = horizontal ? e.nativeEvent.contentOffset.x : e.nativeEvent.contentOffset.y;
     const n = Math.min(pageCount - 1, Math.max(0, Math.round(offset / size)));
-    if (n !== page) setPage(n);
+    if (n === page) return;
+    setPage(n);
+    // A page turn is a discrete event, not a stream: save each one (one request in flight at a time).
+    sync.save({ page: n, pageCount }, { force: true });
   };
 
   const fade = useAnimatedStyle(() => ({

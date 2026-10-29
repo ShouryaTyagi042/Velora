@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { isAbort } from "@/api/client";
 
@@ -25,6 +25,8 @@ type Settled<T> = {
 export function useAsync<T>(fetcher: (signal: AbortSignal) => Promise<T>) {
   const [attempt, setAttempt] = useState(0);
   const [settled, setSettled] = useState<Settled<T> | null>(null);
+  // Stable, so it can be a dependency (e.g. refetch when a screen regains focus).
+  const refetch = useCallback(() => setAttempt((n) => n + 1), []);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -58,6 +60,6 @@ export function useAsync<T>(fetcher: (signal: AbortSignal) => Promise<T>) {
     state,
     // true while a pull-to-refresh is running over data already on screen
     refreshing: sameRequest && !current && state.status === "ok",
-    refetch: () => setAttempt((n) => n + 1),
+    refetch,
   };
 }
