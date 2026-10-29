@@ -1,29 +1,30 @@
-import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from "expo-router";
+import { Stack, ThemeProvider } from "expo-router";
 import { useEffect } from "react";
-import { StyleSheet, useColorScheme } from "react-native";
+import { StyleSheet } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { reconcile } from "@/progress/sync";
 import { ReaderSettingsProvider } from "@/reader/settings";
+import { navigationTheme, useAppTheme } from "@/theme";
 
-// The Stack is the OS's navigation: push slides a screen in, back (button, swipe, Android
-// back key) pops it. Each file in src/app is one screen in it.
+// The root stack holds the tabs and, above them, the screens you go *into*: Details, the player
+// and the reader cover the tab bar, as a film or a book should. Back (button, swipe, Android back
+// key) returns to whichever tab you came from.
 // GestureHandlerRootView must wrap everything that uses gestures (the reader's pinch-zoom).
 export default function RootLayout() {
-  const scheme = useColorScheme();
+  const { dark } = useAppTheme();
   // Push any progress a previous session saved locally but never got to the server.
   useEffect(() => {
     void reconcile();
   }, []);
   return (
     <GestureHandlerRootView style={styles.root}>
-      <ThemeProvider value={scheme === "dark" ? DarkTheme : DefaultTheme}>
+      <ThemeProvider value={navigationTheme(dark)}>
         <ReaderSettingsProvider>
           <Stack>
-            <Stack.Screen name="index" options={{ title: "Velora" }} />
-            <Stack.Screen name="library" options={{ title: "Library" }} />
-            <Stack.Screen name="media/[id]" options={{ title: "" }} />
-            <Stack.Screen name="player/[id]" options={{ title: "" }} />
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="media/[id]" options={{ title: "", headerBackButtonDisplayMode: "minimal" }} />
+            <Stack.Screen name="player/[id]" options={{ title: "", headerBackButtonDisplayMode: "minimal" }} />
             <Stack.Screen name="reader/[id]" options={{ headerShown: false }} />
           </Stack>
         </ReaderSettingsProvider>

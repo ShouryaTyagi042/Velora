@@ -1,21 +1,31 @@
-import { useTheme } from "expo-router";
-import { StyleSheet, Text, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 
-type Props = { title: string; detail?: string };
+import { space } from "@/theme";
+import { Button } from "./Button";
+import { Text } from "./Text";
 
-// EmptyView is the fourth state: the request worked and there is nothing to show.
-export function EmptyView({ title, detail }: Props) {
-  const { colors } = useTheme();
+type Props = { title: string; detail?: string; action?: { label: string; onPress: () => void } };
+
+// EmptyView is the fourth state: the request worked and there is nothing to show. It says what
+// happened, why, and (with action) what to do next.
+export function EmptyView({ title, detail, action }: Props) {
   return (
     <View style={styles.center}>
-      <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
-      {detail && <Text style={styles.detail}>{detail}</Text>}
+      <Text variant="title" style={styles.text}>
+        {title}
+      </Text>
+      {detail && (
+        <Text muted style={styles.text}>
+          {detail}
+        </Text>
+      )}
+      {action && <Button label={action.label} onPress={action.onPress} variant="secondary" style={styles.action} />}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 8 },
-  title: { fontSize: 17, fontWeight: "600", textAlign: "center" },
-  detail: { color: "#888", textAlign: "center" },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", padding: space.xl, gap: space.sm },
+  text: { textAlign: "center" },
+  action: { marginTop: space.md },
 });

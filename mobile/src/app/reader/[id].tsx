@@ -16,9 +16,9 @@ import { usePreload } from "@/hooks/usePreload";
 import { loadWithProgress, resumePage } from "@/progress/resume";
 import { useProgressSync } from "@/progress/useProgressSync";
 import { useReaderSettings } from "@/reader/settings";
+import { onMedia, space, touch, typography } from "@/theme";
 
-const FG = "#fff"; // controls sit over pages on a black background; tokens in phase 10b
-const TOUCH = 44;
+const FG = onMedia.text; // controls sit over pages on a black background
 
 export default function ReaderScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -98,7 +98,7 @@ function Reader({ comic, pageCount }: { comic: Media; pageCount: number }) {
         )}
       />
 
-      <Animated.View style={[styles.top, { paddingTop: insets.top + 4 }, fade]} pointerEvents={chrome ? "box-none" : "none"}>
+      <Animated.View style={[styles.top, { paddingTop: insets.top + space.xs }, fade]} pointerEvents={chrome ? "box-none" : "none"}>
         <Pressable onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Close reader" hitSlop={8}>
           <Surface role="control" visible={chrome} colorScheme="dark" style={styles.round}>
             <Icon sf="xmark" md="close" size={18} color={FG} />
@@ -125,7 +125,7 @@ function Reader({ comic, pageCount }: { comic: Media; pageCount: number }) {
         </Pressable>
       </Animated.View>
 
-      <Animated.View style={[styles.bottom, { paddingBottom: insets.bottom + 8 }, fade]} pointerEvents="none">
+      <Animated.View style={[styles.bottom, { paddingBottom: insets.bottom + space.sm }, fade]} pointerEvents="none">
         <Surface role="bar" visible={chrome} colorScheme="dark" style={styles.indicator}>
           <Text style={styles.indicatorText} accessibilityLiveRegion="polite">
             {page + 1} / {pageCount}
@@ -137,7 +137,7 @@ function Reader({ comic, pageCount }: { comic: Media; pageCount: number }) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#000" },
+  screen: { flex: 1, backgroundColor: onMedia.backdrop },
   top: {
     position: "absolute",
     left: 0,
@@ -145,13 +145,13 @@ const styles = StyleSheet.create({
     top: 0,
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 12,
+    gap: space.sm,
+    paddingHorizontal: space.md,
   },
-  round: { width: TOUCH, height: TOUCH, borderRadius: TOUCH / 2, alignItems: "center", justifyContent: "center", overflow: "hidden" },
-  titleBar: { flex: 1, height: TOUCH, borderRadius: TOUCH / 2, justifyContent: "center", paddingHorizontal: 16, overflow: "hidden" },
-  title: { color: FG, fontSize: 14, fontWeight: "600", textAlign: "center" },
+  round: { width: touch.min, height: touch.min, borderRadius: touch.min / 2, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  titleBar: { flex: 1, height: touch.min, borderRadius: touch.min / 2, justifyContent: "center", paddingHorizontal: space.lg, overflow: "hidden" },
+  title: { ...typography.label, color: FG, fontWeight: "600", textAlign: "center" },
   bottom: { position: "absolute", left: 0, right: 0, bottom: 0, alignItems: "center" },
-  indicator: { paddingHorizontal: 12, height: 32, borderRadius: 16, justifyContent: "center", overflow: "hidden" },
-  indicatorText: { color: FG, fontSize: 12, fontVariant: ["tabular-nums"] },
+  indicator: { paddingHorizontal: space.md, height: 32, borderRadius: 16, justifyContent: "center", overflow: "hidden" },
+  indicatorText: { ...typography.caption, color: FG, fontVariant: ["tabular-nums"] },
 });

@@ -8,14 +8,15 @@ import Animated, { useAnimatedStyle, useReducedMotion, withTiming } from "react-
 
 import type { PlayerStatus } from "@/hooks/usePlayerStatus";
 import { formatDuration } from "@/lib/format";
+import { motion, onMedia, space, touch, typography } from "@/theme";
 import { Icon } from "./Icon";
 import type { AndroidSymbol, SFSymbol } from "expo-symbols";
 import { Surface } from "./Surface";
 
 const HIDE_AFTER_MS = 3000;
 const SKIP_SECONDS = 10;
-const FADE_MS = 250;
-const FG = "#fff"; // controls sit over video, which is dark more often than not; tokens in phase 10b
+const FADE_MS = motion.normal;
+const FG = onMedia.text;
 
 type Props = {
   player: VideoPlayer;
@@ -114,7 +115,7 @@ export function PlayerControls({ player, status: s, onFullscreen, onSeek }: Prop
       <Animated.View style={[StyleSheet.absoluteFill, fade]} pointerEvents={shown ? "box-none" : "none"}>
         <View style={styles.center} pointerEvents="box-none">
           {/* One container: the three buttons are one piece of glass and merge as one material. */}
-          <GlassContainer spacing={24} style={styles.centerRow}>
+          <GlassContainer spacing={space.xl} style={styles.centerRow}>
             <RoundButton size={48} visible={shown} label={`Back ${SKIP_SECONDS} seconds`} onPress={() => skip(-SKIP_SECONDS)}>
               <Icon sf="gobackward.10" md="replay_10" size={22} color={FG} />
             </RoundButton>
@@ -140,7 +141,7 @@ export function PlayerControls({ player, status: s, onFullscreen, onSeek }: Prop
             value={canSeek ? time : 0}
             disabled={!canSeek}
             minimumTrackTintColor={FG}
-            maximumTrackTintColor="rgba(255, 255, 255, 0.35)"
+            maximumTrackTintColor={onMedia.track}
             thumbTintColor={FG}
             onSlidingStart={(v) => {
               setScrubbing(true);
@@ -189,22 +190,22 @@ function RoundButton({ size, visible, label, onPress, children }: RoundButtonPro
 
 const styles = StyleSheet.create({
   center: { ...StyleSheet.absoluteFill, alignItems: "center", justifyContent: "center" },
-  centerRow: { flexDirection: "row", alignItems: "center", gap: 24 },
+  centerRow: { flexDirection: "row", alignItems: "center", gap: space.xl },
   round: { alignItems: "center", justifyContent: "center", overflow: "hidden" },
   bar: {
     position: "absolute",
-    left: 8,
-    right: 8,
-    bottom: 8,
+    left: space.sm,
+    right: space.sm,
+    bottom: space.sm,
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 12,
-    minHeight: 44,
-    borderRadius: 22,
+    gap: space.sm,
+    paddingHorizontal: space.md,
+    minHeight: touch.min,
+    borderRadius: touch.min / 2,
     overflow: "hidden",
   },
-  time: { color: FG, fontSize: 12, fontVariant: ["tabular-nums"] },
-  slider: { flex: 1, height: 44 },
-  barButton: { width: 32, height: 44, alignItems: "center", justifyContent: "center" },
+  time: { ...typography.caption, color: FG, fontVariant: ["tabular-nums"] },
+  slider: { flex: 1, height: touch.min },
+  barButton: { width: 32, height: touch.min, alignItems: "center", justifyContent: "center" },
 });

@@ -1,30 +1,33 @@
-import { router, Stack, useLocalSearchParams, useTheme } from "expo-router";
+import { router, Stack, useLocalSearchParams } from "expo-router";
 import { useCallback, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
 
 import { ApiError } from "@/api/client";
 import { addActor, getMedia, MediaKind, removeActor, type Media } from "@/api/media";
 import { ActorChip } from "@/components/ActorChip";
+import { Button } from "@/components/Button";
 import { ErrorView } from "@/components/ErrorView";
-import { Loading } from "@/components/Loading";
+import { Icon } from "@/components/Icon";
 import { Poster } from "@/components/Poster";
+import { Skeleton } from "@/components/Skeleton";
+import { Text } from "@/components/Text";
 import { useAsync } from "@/hooks/useAsync";
 import { formatBytes, formatDate, formatDuration, formatResolution } from "@/lib/format";
 import { resumeAt, resumePage } from "@/progress/resume";
+import { onMedia, radius, space, touch, typography, useAppTheme } from "@/theme";
 
 export default function Details() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const fetcher = useCallback((signal: AbortSignal) => getMedia(id, { signal }), [id]);
   const { state, refetch } = useAsync(fetcher);
 
-  if (state.status === "loading") return <Loading />;
+  if (state.status === "loading") return <DetailsSkeleton />;
   // A bad id comes back as a 404 ApiError; ErrorView says "Not found".
   if (state.status === "error") return <ErrorView error={state.error} onRetry={refetch} />;
   return <MediaDetails media={state.data} />;
 }
 
 function MediaDetails({ media: initial }: { media: Media }) {
-  const { colors } = useTheme();
   // The screen's own copy: adding or removing an actor replaces it with the server's answer.
   const [media, setMedia] = useState(initial);
   const isVideo = media.kind === MediaKind.Video;
@@ -43,7 +46,7 @@ function MediaDetails({ media: initial }: { media: Media }) {
       : "Read";
 
   return (
-    <ScrollView contentContainerStyle={styles.content}>
+    <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.content}>
       <Stack.Screen options={{ title: media.title }} />
 
       {/* The poster is a second Play (or Read) button: a ▶ looks tappable. */}
@@ -53,38 +56,52 @@ function MediaDetails({ media: initial }: { media: Media }) {
         accessibilityLabel={`${action}: ${media.title}`}
         style={({ pressed }) => [styles.posterBox, pressed && styles.pressed]}
       >
-        <Poster media={media} style={styles.poster} />
+        <Poster media={media} style={styles.poster}>
+          <View style={[styles.playBadge, { backgroundColor: onMedia.scrim }]}>
+            {isVideo ? (
+              <Icon sf="play.fill" md="play_arrow" size={28} color={onMedia.text} />
+            ) : (
+              <Icon sf="book.fill" md="menu_book" size={26} color={onMedia.text} />
+            )}
+          </View>
+        </Poster>
       </Pressable>
 
-      <Text style={[styles.title, { color: colors.text }]}>{media.title}</Text>
-      <Text style={styles.meta}>
-        {describeKind(media)} · {formatBytes(media.sizeBytes)} · added {formatDate(media.addedAt)}
-      </Text>
+      <View style={styles.heading}>
+        <Text variant="display" accessibilityRole="header">
+          {media.title}
+        </Text>
+        <Text variant="label" muted>
+          {describeKind(media)} · {formatBytes(media.sizeBytes)} · added {formatDate(media.addedAt)}
+        </Text>
+      </View>
 
-      {actors.length > 0 && (
-        <View style={styles.actors}>
-          {actors.map((tag) => (
-            <ActorChip
-              key={tag.name}
-              tag={tag}
-              onRemove={() =>
-                removeActor(media.id, tag.name).then(
-                  () => setMedia((m) => ({ ...m, actors: m.actors?.filter((a) => a.name !== tag.name) })),
-                  () => {}, // the chip stays; a failed remove changes nothing
-                )
-              }
-            />
-          ))}
+      <Button label={action} onPress={open} haptic />
+
+      {isVideo && (
+        <View style={styles.section}>
+          <Text variant="title" accessibilityRole="header">
+            Actors
+          </Text>
+          {actors.length > 0 && (
+            <View style={styles.actors}>
+              {actors.map((tag) => (
+                <ActorChip
+                  key={tag.name}
+                  tag={tag}
+                  onRemove={() =>
+                    removeActor(media.id, tag.name).then(
+                      () => setMedia((m) => ({ ...m, actors: m.actors?.filter((a) => a.name !== tag.name) })),
+                      () => {}, // the chip stays; a failed remove changes nothing
+                    )
+                  }
+                />
+              ))}
+            </View>
+          )}
+          <AddActor mediaId={media.id} onAdded={setMedia} />
         </View>
       )}
-      {isVideo && <AddActor mediaId={media.id} onAdded={setMedia} />}
-
-      <Pressable
-        style={({ pressed }) => [styles.button, { backgroundColor: colors.primary }, pressed && styles.pressed]}
-        onPress={open}
-      >
-        <Text style={styles.buttonText}>{action}</Text>
-      </Pressable>
     </ScrollView>
   );
 }
@@ -99,7 +116,7 @@ function describeKind(m: Media): string {
 
 // AddActor is a one-line form: type a name, submit, and the video comes back with it.
 function AddActor({ mediaId, onAdded }: { mediaId: string; onAdded: (m: Media) => void }) {
-  const { colors } = useTheme();
+  const { colors } = useAppTheme();
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -116,12 +133,11 @@ function AddActor({ mediaId, onAdded }: { mediaId: string; onAdded: (m: Media) =
       },
       (err: unknown) => {
         // The server's message is written for people ("name must be non-empty"); show it.
-        setError(err instanceof ApiError ? err.message : "Can't reach the server.");
+        setError(err instanceof ApiError ? err.message : "Couldn't reach the server. Check your Wi-Fi and try again.");
         setBusy(false);
       },
     );
   };
-  const disabled = busy || name.trim() === "";
 
   return (
     <View style={styles.addActor}>
@@ -130,41 +146,49 @@ function AddActor({ mediaId, onAdded }: { mediaId: string; onAdded: (m: Media) =
           value={name}
           onChangeText={setName}
           onSubmitEditing={submit}
-          placeholder="Add actor"
-          placeholderTextColor="#888"
+          placeholder="Add someone who's in it"
+          placeholderTextColor={colors.textMuted}
           returnKeyType="done"
           autoCapitalize="words"
           autoCorrect={false}
           accessibilityLabel="Actor name"
-          style={[styles.input, { color: colors.text, borderColor: colors.border }]}
+          style={[styles.input, { color: colors.text, backgroundColor: colors.surface }]}
         />
-        <Pressable
-          onPress={submit}
-          disabled={disabled}
-          style={({ pressed }) => [styles.addButton, { backgroundColor: colors.primary }, (pressed || disabled) && styles.disabled]}
-        >
-          <Text style={styles.buttonText}>Add</Text>
-        </Pressable>
+        <Button label="Add" onPress={submit} disabled={busy || name.trim() === ""} variant="secondary" />
       </View>
-      {error && <Text style={styles.error}>{error}</Text>}
+      {error && (
+        <Text variant="caption" color={colors.danger} accessibilityLiveRegion="polite">
+          {error}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+// DetailsSkeleton has the screen's shape: poster, title, meta line, button.
+function DetailsSkeleton() {
+  return (
+    <View style={styles.content} accessibilityLabel="Loading">
+      <Skeleton aspectRatio={16 / 9} style={styles.posterBox} />
+      <View style={styles.heading}>
+        <Skeleton width="60%" height={30} />
+        <Skeleton width="80%" height={16} />
+      </View>
+      <Skeleton height={touch.min} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  content: { padding: 16, gap: 12 },
+  content: { padding: space.lg, gap: space.xl },
   posterBox: { alignSelf: "center", width: "100%", maxWidth: 480 },
-  poster: { borderRadius: 10, maxHeight: 360 },
-  title: { fontSize: 22, fontWeight: "700" },
-  meta: { color: "#888" },
-  actors: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  button: { marginTop: 8, padding: 14, borderRadius: 10, alignItems: "center" },
+  poster: { borderRadius: radius.lg, maxHeight: 360 },
+  playBadge: { position: "absolute", width: 64, height: 64, borderRadius: 32, alignItems: "center", justifyContent: "center" },
   pressed: { opacity: 0.7 },
-  disabled: { opacity: 0.5 },
-  buttonText: { color: "#fff", fontWeight: "600", fontSize: 16 },
-  addActor: { gap: 4 },
-  addRow: { flexDirection: "row", gap: 8 },
-  input: { flex: 1, borderWidth: StyleSheet.hairlineWidth, borderRadius: 10, paddingHorizontal: 12, minHeight: 44, fontSize: 16 },
-  addButton: { paddingHorizontal: 16, borderRadius: 10, alignItems: "center", justifyContent: "center" },
-  error: { color: "#d33", fontSize: 13 },
+  heading: { gap: space.xs },
+  section: { gap: space.md },
+  actors: { flexDirection: "row", flexWrap: "wrap", gap: space.sm },
+  addActor: { gap: space.xs },
+  addRow: { flexDirection: "row", gap: space.sm },
+  input: { ...typography.body, flex: 1, borderRadius: radius.lg, paddingHorizontal: space.md, minHeight: touch.min },
 });

@@ -78,6 +78,20 @@ export function removeActor(id: string, name: string): Promise<void> {
   return sendJSON<void>("DELETE", `/api/media/${encodeURIComponent(id)}/actors/${encodeURIComponent(name)}`);
 }
 
+export type ActorCount = { name: string; videoCount: number };
+
+// listActors is every actor with at least one available video, by name.
+export async function listActors({ signal }: { signal?: AbortSignal } = {}): Promise<ActorCount[]> {
+  const body = await getJSON<{ items: ActorCount[] }>("/api/actors", { signal });
+  return body.items;
+}
+
+// scanLibrary asks the server to rescan its folder now (new, renamed and removed files), and
+// resolves once the scan is saved.
+export function scanLibrary(): Promise<{ found: number; warnings: string[] }> {
+  return sendJSON("POST", "/api/scan");
+}
+
 // parseKind turns a route param back into a MediaKind; anything else means "all".
 export function parseKind(value: string | undefined): MediaKind | undefined {
   return Object.values(MediaKind).find((k) => k === value);

@@ -1,15 +1,13 @@
-import { GlassView, type GlassColorScheme, type GlassStyle } from "expo-glass-effect";
+import { GlassView, type GlassColorScheme } from "expo-glass-effect";
 import { View, type StyleProp, type ViewStyle } from "react-native";
 
 import { useGlass } from "@/hooks/useGlass";
+import { glass } from "@/theme";
 
 // Liquid Glass is for the controls layer only (headers, bars, buttons over content), never for
-// content itself. Each role is one decision: which glass, and what to draw where there is none.
-// The fallback colours move into the design tokens in phase 10b.
-const ROLES = {
-  bar: { style: "regular", interactive: false, fallback: "rgba(28, 28, 30, 0.82)" },
-  control: { style: "clear", interactive: true, fallback: "rgba(0, 0, 0, 0.5)" },
-} satisfies Record<string, { style: GlassStyle; interactive: boolean; fallback: string }>;
+// content itself. Each role (a design token) is one decision: which glass, and what to draw
+// where there is none.
+const ROLES = glass;
 
 export type SurfaceRole = keyof typeof ROLES;
 

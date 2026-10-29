@@ -13,17 +13,27 @@ import { PlaybackError, usePlayerStatus } from "@/hooks/usePlayerStatus";
 import { formatDuration } from "@/lib/format";
 import { loadWithProgress, resumeAt } from "@/progress/resume";
 import { useProgressSync } from "@/progress/useProgressSync";
+import { onMedia, space, typography, useAppTheme } from "@/theme";
 
 // The player screen fetches the media first: a bad id becomes a "Not found" from the API
 // instead of a stream the native player can't explain. It also says where to resume.
 export default function PlayerScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const fetcher = useCallback((signal: AbortSignal) => loadWithProgress(id, signal), [id]);
+  const fetcher = useCallback(
+    (signal: AbortSignal) => loadWithProgress(id, signal),
+    [id],
+  );
   const { state, refetch } = useAsync(fetcher);
 
   if (state.status === "loading") return <Loading />;
-  if (state.status === "error") return <ErrorView error={state.error} onRetry={refetch} />;
-  if (state.data.kind !== MediaKind.Video) return <ErrorView error={new PlaybackError(`${state.data.title} is not a video.`)} />;
+  if (state.status === "error")
+    return <ErrorView error={state.error} onRetry={refetch} />;
+  if (state.data.kind !== MediaKind.Video)
+    return (
+      <ErrorView
+        error={new PlaybackError(`${state.data.title} is not a video.`)}
+      />
+    );
   return <Player media={state.data} />;
 }
 
@@ -40,6 +50,7 @@ function Player({ media }: { media: Media }) {
     p.play();
   });
   const s = usePlayerStatus(player);
+  const { colors } = useAppTheme();
 
   // Progress: throttled saves while playing; immediate ones on pause, seek, leaving the screen
   // and backgrounding (the last two inside useProgressSync). Never while loading or buffering:
@@ -50,10 +61,16 @@ function Player({ media }: { media: Media }) {
     durationMs: Math.round(player.duration * 1000),
   });
   useEventListener(player, "timeUpdate", ({ currentTime }) => {
-    if (player.playing && player.status === "readyToPlay" && player.duration > 0) sync.save(position(currentTime));
+    if (
+      player.playing &&
+      player.status === "readyToPlay" &&
+      player.duration > 0
+    )
+      sync.save(position(currentTime));
   });
   useEventListener(player, "playingChange", ({ isPlaying }) => {
-    if (!isPlaying && player.duration > 0) sync.save(position(player.currentTime), { force: true });
+    if (!isPlaying && player.duration > 0)
+      sync.save(position(player.currentTime), { force: true });
   });
   const onSeek = (to: number) => {
     if (player.duration > 0) sync.save(position(to), { force: true });
@@ -90,24 +107,43 @@ function Player({ media }: { media: Media }) {
             fullscreenOptions={{ enable: true }}
             onFullscreenExit={() => setFullscreen(false)}
           />
-          {!fullscreen && <PlayerControls player={player} status={s} onFullscreen={() => setFullscreen(true)} onSeek={onSeek} />}
+          {!fullscreen && (
+            <PlayerControls
+              player={player}
+              status={s}
+              onFullscreen={() => setFullscreen(true)}
+              onSeek={onSeek}
+            />
+          )}
         </View>
       )}
 
-      {/* Raw player state, for exercises 2-4: watch it change while you seek and starve it. */}
-      <Text style={styles.debug}>
-        {s.status}
-        {s.playing ? " · playing" : " · paused"}
-        {s.ended ? " · ended" : ""} · {formatDuration(s.currentTime)} / {formatDuration(s.duration)} · buffered to{" "}
-        {formatDuration(s.bufferedPosition)}
-      </Text>
+      {/* Raw player state, for phase 6's exercises 2-4; development builds only. */}
+      {__DEV__ && (
+        <Text style={[styles.debug, { color: colors.textMuted }]}>
+          {s.status}
+          {s.playing ? " · playing" : " · paused"}
+          {s.ended ? " · ended" : ""} · {formatDuration(s.currentTime)} /{" "}
+          {formatDuration(s.duration)} · buffered to{" "}
+          {formatDuration(s.bufferedPosition)}
+        </Text>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, justifyContent: "center" },
-  videoBox: { width: "100%", aspectRatio: 16 / 9, backgroundColor: "#000" },
+  videoBox: {
+    width: "100%",
+    aspectRatio: 16 / 9,
+    backgroundColor: onMedia.backdrop,
+  },
   video: { flex: 1 },
-  debug: { color: "#888", fontSize: 12, textAlign: "center", padding: 12, fontVariant: ["tabular-nums"] },
+  debug: {
+    ...typography.caption,
+    textAlign: "center",
+    padding: space.md,
+    fontVariant: ["tabular-nums"],
+  },
 });

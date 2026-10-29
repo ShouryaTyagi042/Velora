@@ -11,6 +11,8 @@ import {
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 
+import { onMedia } from "@/theme";
+
 const MAX_SCALE = 5;
 
 type Props = {
@@ -112,5 +114,5 @@ export function ComicPage({ uri, width, height, zoomed, onZoomChange, onTap, lab
 }
 
 const styles = StyleSheet.create({
-  page: { overflow: "hidden", backgroundColor: "#000" },
+  page: { overflow: "hidden", backgroundColor: onMedia.backdrop },
 });

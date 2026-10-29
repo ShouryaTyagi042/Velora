@@ -1,32 +1,47 @@
-import { useTheme } from "expo-router";
-import { Pressable, StyleSheet, Text, View, type ViewStyle } from "react-native";
+import { Pressable, StyleSheet, View, type ViewStyle } from "react-native";
 
 import { MediaKind, type Media, type Progress } from "@/api/media";
 import { formatDuration } from "@/lib/format";
+import { onMedia, radius, space, useAppTheme } from "@/theme";
 import { Poster } from "./Poster";
+import { Text } from "./Text";
 
-type Props = { media: Media; onPress: (media: Media) => void; style?: ViewStyle };
+// showKind draws the VIDEO / COMIC badge: useful where both kinds mix (Home, Search), noise on a
+// screen that only shows one.
+type Props = { media: Media; onPress: (media: Media) => void; style?: ViewStyle; showKind?: boolean };
 
 // MediaCard is a poster and a title. A video's poster shows its duration once it's known, and
-// anything started shows a thin progress bar along the poster's bottom edge.
-export function MediaCard({ media, onPress, style }: Props) {
-  const { colors } = useTheme();
+// anything started shows a thin progress bar along the poster's bottom edge. One accessible
+// element: a screen reader reads "The Matrix, video, 2 hours 16 minutes, 40% watched".
+export function MediaCard({ media, onPress, style, showKind = true }: Props) {
+  const { colors } = useAppTheme();
   const isVideo = media.kind === MediaKind.Video;
   const done = media.progress && !media.progress.completed ? fraction(media.progress) : null;
   return (
-    <Pressable onPress={() => onPress(media)} style={({ pressed }) => [styles.card, style, pressed && styles.pressed]}>
+    <Pressable
+      onPress={() => onPress(media)}
+      accessibilityRole="button"
+      accessibilityLabel={describe(media, done)}
+      style={({ pressed }) => [styles.card, style, pressed && styles.pressed]}
+    >
       <Poster media={media}>
-        <Text style={[styles.badge, styles.kind]}>{isVideo ? "VIDEO" : "COMIC"}</Text>
+        {showKind && (
+          <Text variant="caption" color={onMedia.text} style={[styles.badge, styles.kind]}>
+            {isVideo ? "VIDEO" : "COMIC"}
+          </Text>
+        )}
         {media.video && (
-          <Text style={[styles.badge, styles.duration]}>{formatDuration(media.video.durationMs / 1000)}</Text>
+          <Text variant="caption" color={onMedia.text} style={[styles.badge, styles.duration]}>
+            {formatDuration(media.video.durationMs / 1000)}
+          </Text>
         )}
         {done !== null && (
-          <View style={styles.track}>
+          <View style={[styles.track, { backgroundColor: onMedia.track }]}>
             <View style={[styles.bar, { width: `${done * 100}%`, backgroundColor: colors.primary }]} />
           </View>
         )}
       </Poster>
-      <Text numberOfLines={2} style={[styles.title, { color: colors.text }]}>
+      <Text variant="label" numberOfLines={2}>
         {media.title}
       </Text>
     </Pressable>
@@ -40,23 +55,26 @@ function fraction(p: Progress): number {
   return 0;
 }
 
+function describe(m: Media, done: number | null): string {
+  const parts = [m.title, m.kind === MediaKind.Video ? "video" : "comic"];
+  if (m.video) parts.push(formatDuration(m.video.durationMs / 1000));
+  if (done !== null) parts.push(`${Math.round(done * 100)}% ${m.kind === MediaKind.Video ? "watched" : "read"}`);
+  return parts.join(", ");
+}
+
 const styles = StyleSheet.create({
-  card: { gap: 6 },
+  card: { gap: space.sm },
   pressed: { opacity: 0.6 },
   badge: {
     position: "absolute",
-    color: "#fff",
-    fontSize: 10,
     fontWeight: "700",
-    backgroundColor: "#00000066",
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    borderRadius: 4,
+    backgroundColor: onMedia.scrim,
+    paddingHorizontal: space.xs,
+    borderRadius: radius.sm,
     overflow: "hidden",
   },
-  kind: { top: 6, left: 6 },
-  duration: { bottom: 6, right: 6, fontVariant: ["tabular-nums"] },
-  track: { position: "absolute", left: 0, right: 0, bottom: 0, height: 4, backgroundColor: "#ffffff59" },
+  kind: { top: space.sm, left: space.sm },
+  duration: { bottom: space.sm, right: space.sm, fontVariant: ["tabular-nums"] },
+  track: { position: "absolute", left: 0, right: 0, bottom: 0, height: 4 },
   bar: { height: "100%" },
-  title: { fontSize: 14, fontWeight: "500" },
 });
