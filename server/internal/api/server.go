@@ -11,7 +11,8 @@ import (
 // NewHandler returns the HTTP handler for the whole API: routes wrapped in middleware.
 // It depends on interfaces (media.Repository, Rescanner, fs.FS), never on a concrete store,
 // scanner or directory. files is the media library; media RelPaths are opened inside it.
-func NewHandler(repo media.Repository, lib Rescanner, files fs.FS) http.Handler {
+// thumbs holds the extractor's video thumbnails, {id}.jpg.
+func NewHandler(repo media.Repository, lib Rescanner, files, thumbs fs.FS) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.Handle("GET /health", HandlerE(health))
@@ -20,7 +21,7 @@ func NewHandler(repo media.Repository, lib Rescanner, files fs.FS) http.Handler 
 	mux.Handle("POST /api/media/{id}/actors", addActor(repo))
 	mux.Handle("DELETE /api/media/{id}/actors/{name}", removeActor(repo))
 	mux.Handle("GET /api/actors", listActors(repo))
-	mux.Handle("GET /api/media/{id}/thumbnail", HandlerE(getThumbnail))
+	mux.Handle("GET /api/media/{id}/thumbnail", getThumbnail(repo, files, thumbs))
 	mux.Handle("GET /api/media/{id}/stream", streamVideo(repo, files, http.ServeContent)) // GET patterns also match HEAD
 	mux.Handle("GET /api/media/{id}/pages", listPages(repo))
 	mux.Handle("GET /api/media/{id}/pages/{n}", getPage(repo, files))

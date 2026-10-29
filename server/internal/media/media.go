@@ -39,6 +39,15 @@ type ComicMeta struct {
 	Pages     []string `json:"-"` // page filenames in reading order; never sent to clients
 }
 
+// VideoMeta is what ffprobe found in a video (phase 9). Absent until the extractor has run.
+type VideoMeta struct {
+	DurationMs int     `json:"durationMs"`
+	Width      int     `json:"width"`
+	Height     int     `json:"height"`
+	Codec      string  `json:"codec"`
+	FPS        float64 `json:"fps"`
+}
+
 // Media is one item in the library: a video file or a comic folder.
 type Media struct {
 	ID          string     `json:"id"`
@@ -52,6 +61,7 @@ type Media struct {
 	AddedAt     time.Time  `json:"addedAt"`
 	Actors      []ActorTag `json:"actors,omitempty"` // videos only
 	Comic       *ComicMeta `json:"comic,omitempty"`  // comics only
+	Video       *VideoMeta `json:"video,omitempty"`  // videos only, once extracted
 }
 
 // HasActor reports whether any of m's actors is called name.

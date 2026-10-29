@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/ShouryaTyagi042/Velora/server/internal/media"
 	"github.com/ShouryaTyagi042/Velora/server/internal/memstore"
@@ -47,7 +48,7 @@ func comicHandler(t *testing.T) (http.Handler, string) {
 			Comic: &media.ComicMeta{PageCount: 3, Pages: []string{"page-1.png", "page-2.png", "page-3.png"}}}, // page-3 deleted since the scan
 		{ID: "v1", Title: "The Matrix", Kind: media.KindVideo, RelPath: "movies/The Matrix.mp4"},
 	})
-	return NewHandler(repo, fakeRescanner{}, root.FS()), dir
+	return NewHandler(repo, fakeRescanner{}, root.FS(), fstest.MapFS{}), dir
 }
 
 func TestPages(t *testing.T) {
@@ -122,5 +123,14 @@ func TestPageConditionalAndRange(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusPartialContent || rec.Body.String() != "\x89PNG" {
 		t.Errorf("Range: got %d %q, want 206 and the PNG signature", rec.Code, rec.Body.String())
+	}
+}
+
+func TestComicThumbnailIsFirstPage(t *testing.T) {
+	h, _ := comicHandler(t)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/media/c1/thumbnail", nil))
+	if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/png" {
+		t.Errorf("got %d %s, want 200 image/png", rec.Code, rec.Header().Get("Content-Type"))
 	}
 }

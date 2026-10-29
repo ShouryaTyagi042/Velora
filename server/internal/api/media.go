@@ -56,8 +56,3 @@ func getMedia(repo media.Repository) HandlerE {
 		return nil
 	}
 }
-
-// getThumbnail handles GET /api/media/{id}/thumbnail. Phase 9 generates thumbnails.
-func getThumbnail(w http.ResponseWriter, r *http.Request) error {
-	return notImplementedError("thumbnails are not implemented yet")
-}

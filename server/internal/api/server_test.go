@@ -31,7 +31,9 @@ func newTestHandler() http.Handler {
 			Actors: []media.ActorTag{{Name: "Matthew McConaughey", Source: media.ActorFromFolder}}},
 		{ID: "c1", Title: "Watchmen", Kind: media.KindComic, RelPath: "comics/secret-dir/Watchmen",
 			Comic: &media.ComicMeta{PageCount: 2, Pages: []string{"secret-page-1.png", "secret-page-2.png"}}},
-	}), fakeRescanner{found: 3, warnings: nil}, fstest.MapFS{})
+	}), fakeRescanner{found: 3, warnings: nil}, fstest.MapFS{}, fstest.MapFS{
+		"v2.jpg": {Data: []byte("\xff\xd8 a jpeg")}, // Interstellar has a thumbnail; The Matrix is pending
+	})
 }
 
 // fakeRescanner stands in for the real scanner + store.
@@ -62,7 +64,8 @@ func TestEndpoints(t *testing.T) {
 		{"list huge actor", "/api/media?actor=" + strings.Repeat("a", 201), 400, "validation"},
 		{"get existing", "/api/media/v1", 200, ""},
 		{"get missing", "/api/media/nope", 404, "not_found"},
-		{"thumbnail stub", "/api/media/v1/thumbnail", 501, "not_implemented"},
+		{"thumbnail pending", "/api/media/v1/thumbnail", 202, ""},
+		{"thumbnail unknown", "/api/media/nope/thumbnail", 404, "not_found"},
 	}
 
 	h := newTestHandler()
@@ -165,7 +168,7 @@ func TestScanEndpoint(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	NewHandler(failingRepo{}, fakeRescanner{err: errors.New("open /Users/x/media: permission denied")}, fstest.MapFS{}).
+	NewHandler(failingRepo{}, fakeRescanner{err: errors.New("open /Users/x/media: permission denied")}, fstest.MapFS{}, fstest.MapFS{}).
 		ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/scan", nil))
 	if rec.Code != 500 || strings.Contains(rec.Body.String(), "/Users/") {
 		t.Errorf("scan failure: got %d %s, want a 500 that hides the path", rec.Code, rec.Body)
@@ -186,7 +189,7 @@ func (failingRepo) Get(ctx context.Context, id string) (media.Media, error) {
 
 func TestInternalErrorsAreNotLeaked(t *testing.T) {
 	rec := httptest.NewRecorder()
-	NewHandler(failingRepo{}, fakeRescanner{}, fstest.MapFS{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/media", nil))
+	NewHandler(failingRepo{}, fakeRescanner{}, fstest.MapFS{}, fstest.MapFS{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/media", nil))
 
 	if rec.Code != 500 {
 		t.Fatalf("status = %d, want 500", rec.Code)
@@ -207,5 +210,19 @@ func TestRecoverTurnsPanicInto500(t *testing.T) {
 	var env errorEnvelope
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil || env.Error.Code != "internal" {
 		t.Errorf("body = %s, want internal error envelope", rec.Body)
+	}
+}
+
+func TestVideoThumbnail(t *testing.T) {
+	rec := httptest.NewRecorder()
+	newTestHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/media/v2/thumbnail", nil))
+	if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/jpeg" || rec.Header().Get("Cache-Control") != "public, max-age=86400" {
+		t.Errorf("ready: got %d %v", rec.Code, rec.Header())
+	}
+
+	rec = httptest.NewRecorder()
+	newTestHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/media/v1/thumbnail", nil))
+	if rec.Code != 202 || rec.Header().Get("Cache-Control") != "no-store" {
+		t.Errorf("pending: got %d %v, want 202 and no-store", rec.Code, rec.Header())
 	}
 }

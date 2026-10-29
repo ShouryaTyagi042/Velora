@@ -10,12 +10,15 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/ShouryaTyagi042/Velora/server/internal/api"
+	"github.com/ShouryaTyagi042/Velora/server/internal/extractor"
+	"github.com/ShouryaTyagi042/Velora/server/internal/ffmpeg"
 	"github.com/ShouryaTyagi042/Velora/server/internal/media"
 	"github.com/ShouryaTyagi042/Velora/server/internal/postgres"
 	"github.com/ShouryaTyagi042/Velora/server/internal/scanner"
@@ -67,6 +70,20 @@ func run() error {
 	}
 	log.Printf("database migrated to version %d", version)
 
+	// Thumbnails are Velora's own files, derived and disposable: a cache, not the library.
+	if err := ffmpeg.Check(); err != nil {
+		return err
+	}
+	cacheDir, err := cacheDir()
+	if err != nil {
+		return err
+	}
+	thumbDir := filepath.Join(cacheDir, "thumbs")
+	if err := os.MkdirAll(thumbDir, 0o755); err != nil {
+		return err
+	}
+	log.Printf("cache: %s", cacheDir)
+
 	repo := postgres.NewMediaRepo(db)
 	lib := &library{fsys: root.FS(), store: repo}
 	if _, _, err := lib.Rescan(context.Background()); err != nil {
@@ -74,7 +91,7 @@ func run() error {
 	}
 
 	srv := &http.Server{
-		Handler: api.CORS(corsOrigins(), api.NewHandler(repo, lib, root.FS())),
+		Handler: api.CORS(corsOrigins(), api.NewHandler(repo, lib, root.FS(), os.DirFS(thumbDir))),
 		// A client that connects and sends nothing would otherwise hold a goroutine forever.
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
@@ -84,6 +101,17 @@ func run() error {
 	// ctx is cancelled on Ctrl+C (SIGINT) or SIGTERM.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// The extractor fills in metadata and thumbnails in the background, one video at a time.
+	// It stops with ctx, or when run returns for any other reason; main waits for it, so no
+	// ffmpeg is left running after exit.
+	jobsCtx, stopJobs := context.WithCancel(ctx)
+	var jobs sync.WaitGroup
+	jobs.Go(func() { extractor.New(repo, mediaDir, thumbDir).Run(jobsCtx) })
+	defer func() {
+		stopJobs()
+		jobs.Wait()
+	}()
 
 	// Bind first, so "address already in use" is reported before we claim to be listening.
 	ln, err := net.Listen("tcp", addr)
@@ -115,6 +143,18 @@ func run() error {
 	}
 	log.Print("shut down cleanly")
 	return nil
+}
+
+// cacheDir is VELORA_CACHE_DIR, or the OS's cache folder (~/Library/Caches/velora on a Mac).
+func cacheDir() (string, error) {
+	if d := os.Getenv("VELORA_CACHE_DIR"); d != "" {
+		return d, nil
+	}
+	d, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("VELORA_CACHE_DIR is not set and there is no user cache dir: %w", err)
+	}
+	return filepath.Join(d, "velora"), nil
 }
 
 // corsOrigins reads VELORA_CORS_ORIGINS, a comma-separated list of browser origins

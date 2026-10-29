@@ -7,8 +7,9 @@ import { addActor, getMedia, MediaKind, removeActor, type Media } from "@/api/me
 import { ActorChip } from "@/components/ActorChip";
 import { ErrorView } from "@/components/ErrorView";
 import { Loading } from "@/components/Loading";
+import { Poster } from "@/components/Poster";
 import { useAsync } from "@/hooks/useAsync";
-import { formatBytes, formatDate } from "@/lib/format";
+import { formatBytes, formatDate, formatDuration, formatResolution } from "@/lib/format";
 
 export default function Details() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -38,15 +39,14 @@ function MediaDetails({ media: initial }: { media: Media }) {
         onPress={open}
         accessibilityRole="button"
         accessibilityLabel={`${isVideo ? "Play" : "Read"} ${media.title}`}
-        style={({ pressed }) => [styles.poster, { aspectRatio: isVideo ? 16 / 9 : 2 / 3 }, pressed && styles.pressed]}
+        style={({ pressed }) => [styles.posterBox, pressed && styles.pressed]}
       >
-        <Text style={styles.glyph}>{isVideo ? "▶" : "▤"}</Text>
+        <Poster media={media} style={styles.poster} />
       </Pressable>
 
       <Text style={[styles.title, { color: colors.text }]}>{media.title}</Text>
       <Text style={styles.meta}>
-        {isVideo ? "Video" : `Comic · ${media.comic?.pageCount ?? 0} pages`} · {formatBytes(media.sizeBytes)} · added{" "}
-        {formatDate(media.addedAt)}
+        {describeKind(media)} · {formatBytes(media.sizeBytes)} · added {formatDate(media.addedAt)}
       </Text>
 
       {actors.length > 0 && (
@@ -75,6 +75,14 @@ function MediaDetails({ media: initial }: { media: Media }) {
       </Pressable>
     </ScrollView>
   );
+}
+
+// describeKind is the first part of the meta line: "1:42:10 · 1080p · h264", "Comic · 24 pages".
+function describeKind(m: Media): string {
+  if (m.kind === MediaKind.Comic) return `Comic · ${m.comic?.pageCount ?? 0} pages`;
+  if (!m.video) return "Video"; // still being processed
+  const v = m.video;
+  return `${formatDuration(v.durationMs / 1000)} · ${formatResolution(v.width, v.height)} · ${v.codec}`;
 }
 
 // AddActor is a one-line form: type a name, submit, and the video comes back with it.
@@ -133,16 +141,8 @@ function AddActor({ mediaId, onAdded }: { mediaId: string; onAdded: (m: Media) =
 
 const styles = StyleSheet.create({
   content: { padding: 16, gap: 12 },
-  poster: {
-    backgroundColor: "#2b3a55",
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-    maxHeight: 360,
-    alignSelf: "center",
-    width: "100%",
-  },
-  glyph: { color: "#ffffffcc", fontSize: 40 },
+  posterBox: { alignSelf: "center", width: "100%", maxWidth: 480 },
+  poster: { borderRadius: 10, maxHeight: 360 },
   title: { fontSize: 22, fontWeight: "700" },
   meta: { color: "#888" },
   actors: { flexDirection: "row", flexWrap: "wrap", gap: 8 },

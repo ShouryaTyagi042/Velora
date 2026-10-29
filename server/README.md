@@ -1,10 +1,10 @@
 # velora-server
 
-The Go backend for Velora, a personal media server. `net/http` from the standard library and PostgreSQL through `database/sql` + `pgx`. It scans a media folder on startup into Postgres.
+The Go backend for Velora, a personal media server. `net/http` from the standard library, PostgreSQL through `database/sql` + `pgx`, and `ffprobe`/`ffmpeg` for video metadata. It scans a media folder on startup into Postgres, and a background job fills in each video's duration, resolution and thumbnail.
 
 ## Run
 
-Requires Go ≥ 1.25 and PostgreSQL 16. Create a role and two databases once, as a superuser (`psql -U postgres`):
+Requires Go ≥ 1.25, PostgreSQL 16 and FFmpeg (`brew install ffmpeg`). Create a role and two databases once, as a superuser (`psql -U postgres`):
 
 ```sql
 create role velora login password 'velora-dev';
@@ -20,7 +20,7 @@ make build    # → bin/velora-server
 make fmt vet test   # test loads .env too; without VELORA_TEST_DSN the Postgres tests skip
 ```
 
-On start the server applies any new migrations (`migrations/*.sql`, embedded in the binary, each applied once and recorded in `schema_migrations`) and scans the library.
+On start the server applies any new migrations (`migrations/*.sql`, embedded in the binary, each applied once and recorded in `schema_migrations`), scans the library, and starts the metadata extractor.
 
 `Ctrl+C` (or `SIGTERM`) shuts down gracefully: new connections are refused and in-flight requests get up to 10 s to finish. A second `Ctrl+C` exits immediately.
 
@@ -32,6 +32,7 @@ On start the server applies any new migrations (`migrations/*.sql`, embedded in 
 | `VELORA_MEDIA_DIR` | *(required)* | The library folder, holding `movies/` and `comics/` (below). The server won't start without it. |
 | `VELORA_CORS_ORIGINS` | *(none)* | Comma-separated browser origins allowed to call the API, e.g. `http://localhost:8081` for Expo web. Only browsers enforce CORS; the phone app doesn't need it. Never `*`. |
 | `VELORA_DATABASE_URL` | *(required)* | Postgres DSN, e.g. `postgres://velora:velora-dev@localhost:5432/velora?sslmode=disable`. |
+| `VELORA_CACHE_DIR` | the OS cache dir + `/velora` | Velora's own derived files: `thumbs/{id}.jpg`. If you delete it, also `delete from video_metadata`, or the extractor won't redo videos it already finished. |
 | `VELORA_TEST_DSN` | *(none)* | Tests only: a database the Postgres tests may wipe. Unset, they skip. |
 
 `.env.example` documents the variables. `make run` and `make test` load `.env`; plain `go run` doesn't. `make run` defaults `VELORA_MEDIA_DIR` to `~/velora-media` and `VELORA_CORS_ORIGINS` to `http://localhost:8081`.
@@ -72,7 +73,7 @@ Every response is JSON (`Content-Type: application/json; charset=utf-8`) and car
 | `GET /api/media?kind=video\|comic` | `200 {"items":[...]}` of that kind | `400 validation` for any other `kind` |
 | `GET /api/media?actor=<name>` | `200 {"items":[...]}` with that actor (exact match; combines with `kind`); an unknown actor gives `[]` | `400 validation` if empty or over 200 bytes |
 | `GET /api/media/{id}` | `200 Media` | `404 not_found` |
-| `GET /api/media/{id}/thumbnail` | | `501 not_implemented` (phase 9) |
+| `GET /api/media/{id}/thumbnail` | `200 image/jpeg` (a frame from 10% in, 480 px wide, `max-age=86400`); a comic's is its first page; `202 {"status":"pending"}` while a video's is still being made | `404 not_found` |
 | `GET /api/media/{id}/pages` | `200 {"pageCount":24}` | `404 not_found` if not a comic |
 | `GET /api/media/{id}/pages/{n}` | `200` the image of page `n` (0-based), with `Last-Modified`/`304` and ranges; with `?v=<modTime>` also `Cache-Control: immutable` | `400 validation` if `n` isn't a number; `404 not_found` if out of range, not a comic, or deleted since the scan |
 | `POST /api/media/{id}/actors` | `200 Media` with the actor added; adding one it already has is a no-op `200`. Body `{"name":"Carrie-Anne Moss"}`, 1–100 characters after trimming | `400 validation` (bad body, or a comic), `404 not_found` |
@@ -88,14 +89,15 @@ Any other method on a known path returns `405`. Unknown paths return the mux's p
 ```json
 { "id": "7", "title": "The Matrix", "kind": "video", "mimeType": "video/mp4",
   "sizeBytes": 2147483648, "modTime": "2026-10-04T00:00:00Z", "addedAt": "2026-10-04T00:00:00Z",
-  "actors": [{ "name": "Keanu Reeves", "source": "folder" }, { "name": "Carrie-Anne Moss", "source": "manual" }] }
+  "actors": [{ "name": "Keanu Reeves", "source": "folder" }, { "name": "Carrie-Anne Moss", "source": "manual" }],
+  "video": { "durationMs": 8160000, "width": 1920, "height": 800, "codec": "h264", "fps": 23.976 } }
 
 { "id": "12", "title": "Watchmen", "kind": "comic",
   "sizeBytes": 18874368, "modTime": "2026-10-04T00:00:00Z", "addedAt": "2026-10-04T00:00:00Z",
   "comic": { "pageCount": 24 } }
 ```
 
-`actors` appears only on videos that have one: `folder` actors come from the folder layout and change only by renaming it; `manual` ones are added in the app and survive rescans. `comic` appears only on comics. File paths and page filenames are never sent; clients refer to media by `id` only.
+`actors` appears only on videos that have one: `folder` actors come from the folder layout and change only by renaming it; `manual` ones are added in the app and survive rescans. `video` appears once the extractor has run. `comic` appears only on comics. File paths and page filenames are never sent; clients refer to media by `id` only.
 
 ### Errors
 

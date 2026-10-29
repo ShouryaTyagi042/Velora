@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
+	"github.com/ShouryaTyagi042/Velora/server/internal/extractor"
+	"github.com/ShouryaTyagi042/Velora/server/internal/media"
 	"github.com/ShouryaTyagi042/Velora/server/internal/media/mediatest"
 	"github.com/ShouryaTyagi042/Velora/server/migrations"
 )
@@ -69,5 +72,56 @@ func TestMigrateTwiceIsANoOp(t *testing.T) {
 	}
 	if n != v {
 		t.Errorf("schema_migrations has %d rows, want %d (one per migration)", n, v)
+	}
+}
+
+func TestExtractorQueue(t *testing.T) {
+	repo := NewMediaRepo(emptyDB(t))
+	ctx := context.Background()
+	if _, err := repo.Sync(ctx, mediatest.Library(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Four videos pending; the comic never is.
+	seen := map[string]bool{}
+	for range 10 {
+		m, ok, err := repo.NextPending(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			break
+		}
+		if m.Kind != media.KindVideo || seen[m.ID] {
+			t.Fatalf("NextPending = %s %s (seen: %v)", m.Kind, m.Title, seen[m.ID])
+		}
+		seen[m.ID] = true
+		if m.Title == "Loose Clip" { // fails every time
+			for range extractor.MaxAttempts {
+				if err := repo.RecordFailure(ctx, m.ID, "moov atom not found"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			continue
+		}
+		if err := repo.SetVideoMeta(ctx, m.ID, media.VideoMeta{DurationMs: 1000, Width: 1920, Height: 1080, Codec: "h264", FPS: 23.976}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(seen) != 4 {
+		t.Errorf("extracted %d videos, want 4", len(seen))
+	}
+
+	got, err := repo.List(ctx, media.ListFilter{Kind: media.KindVideo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range got {
+		switch {
+		case m.Title == "Loose Clip" && m.Video != nil:
+			t.Errorf("failed video has metadata: %+v", m.Video)
+		case m.Title != "Loose Clip" && (m.Video == nil || m.Video.FPS != 23.976):
+			t.Errorf("%s: Video = %+v", m.Title, m.Video)
+		}
 	}
 }

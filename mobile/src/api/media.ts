@@ -18,6 +18,15 @@ export type ActorTag = {
   source: ActorSource;
 };
 
+// What ffprobe found in a video. Absent until the server's extractor has run (seconds after a scan).
+export type VideoMeta = {
+  durationMs: number;
+  width: number;
+  height: number;
+  codec: string;
+  fps: number;
+};
+
 export type Media = {
   id: string;
   title: string;
@@ -28,6 +37,7 @@ export type Media = {
   addedAt: string; // RFC 3339 timestamp
   actors?: ActorTag[]; // videos only; absent when there are none
   comic?: { pageCount: number }; // comics only
+  video?: VideoMeta; // videos only, once extracted
 };
 
 export type ListOptions = { kind?: MediaKind; actor?: string; signal?: AbortSignal };
@@ -67,6 +77,14 @@ export function parseKind(value: string | undefined): MediaKind | undefined {
 // changed page simply gets a new URL.
 export function pageUrl(comic: Media, n: number): string {
   return `${baseUrl}/api/media/${encodeURIComponent(comic.id)}/pages/${n}?v=${encodeURIComponent(comic.modTime)}`;
+}
+
+// thumbnailUrl is the poster image, or null while a video's thumbnail is still being made (its
+// metadata and thumbnail arrive together). A comic's is its first page, available at once.
+// v changes when the file does, so a replaced file never shows a stale poster.
+export function thumbnailUrl(m: Media): string | null {
+  if (m.kind === MediaKind.Video && !m.video) return null;
+  return `${baseUrl}/api/media/${encodeURIComponent(m.id)}/thumbnail?v=${encodeURIComponent(m.modTime)}`;
 }
 
 // streamUrl is what the native player fetches: GET /api/media/{id}/stream with Range headers.

@@ -39,17 +39,20 @@ type querier interface {
 const selectMedia = `
 select m.id, m.fingerprint, m.kind, m.title, m.rel_path, coalesce(m.mime_type, ''), m.size_bytes,
        m.mod_time, m.added_at, cm.page_count, cm.pages,
+       vm.extracted_at is not null, coalesce(vm.duration_ms, 0), coalesce(vm.width, 0),
+       coalesce(vm.height, 0), coalesce(vm.codec, ''), coalesce(vm.fps, 0)::float8,
        coalesce(json_agg(json_build_object('name', a.name, 'source', ma.source)
                          order by ma.source = 'manual', a.name)
                   filter (where a.id is not null), '[]')
 from media m
 left join comic_metadata cm on cm.media_id = m.id
+left join video_metadata vm on vm.media_id = m.id
 left join media_actors ma   on ma.media_id = m.id
 left join actors a          on a.id = ma.actor_id
 where m.missing_since is null`
 
 const groupMedia = `
-group by m.id, cm.media_id`
+group by m.id, cm.media_id, vm.media_id`
 
 // List implements media.Repository. Both filters run in SQL. The actor filter is an exists, not a
 // join, so the aggregate still sees every actor of a matching video.
@@ -101,16 +104,22 @@ func (r *MediaRepo) scanMedia(row interface{ Scan(...any) error }) (media.Media,
 		id        int64
 		pageCount sql.NullInt32
 		pages     []string
+		extracted bool
+		v         media.VideoMeta
 		actors    []byte
 	)
 	err := row.Scan(&id, &m.Fingerprint, &m.Kind, &m.Title, &m.RelPath, &m.MimeType, &m.SizeBytes,
-		&m.ModTime, &m.AddedAt, &pageCount, r.types.SQLScanner(&pages), &actors)
+		&m.ModTime, &m.AddedAt, &pageCount, r.types.SQLScanner(&pages),
+		&extracted, &v.DurationMs, &v.Width, &v.Height, &v.Codec, &v.FPS, &actors)
 	if err != nil {
 		return media.Media{}, err
 	}
 	m.ID = formatID(id)
 	if pageCount.Valid {
 		m.Comic = &media.ComicMeta{PageCount: int(pageCount.Int32), Pages: pages}
+	}
+	if extracted {
+		m.Video = &v
 	}
 	if err := json.Unmarshal(actors, &m.Actors); err != nil {
 		return media.Media{}, fmt.Errorf("media %d actors: %w", id, err)
@@ -319,6 +328,8 @@ func (r *MediaRepo) RemoveActor(ctx context.Context, id, name string) error {
 }
 
 func formatID(n int64) string { return strconv.FormatInt(n, 10) }
+
+func isNoRows(err error) bool { return errors.Is(err, sql.ErrNoRows) }
 
 // parseID turns an API id into the bigint key. Anything else can't exist, so it's not found.
 func parseID(id string) (int64, bool) {

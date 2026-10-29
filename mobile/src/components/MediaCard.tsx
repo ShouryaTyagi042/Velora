@@ -1,26 +1,24 @@
 import { useTheme } from "expo-router";
-import { Pressable, StyleSheet, Text, View, type ViewStyle } from "react-native";
+import { Pressable, StyleSheet, Text, type ViewStyle } from "react-native";
 
 import { MediaKind, type Media } from "@/api/media";
+import { formatDuration } from "@/lib/format";
+import { Poster } from "./Poster";
 
 type Props = { media: Media; onPress: (media: Media) => void; style?: ViewStyle };
 
-// MediaCard is a poster and a title. The poster is a placeholder until phase 9's thumbnails;
-// its shape already matches the kind: 16:9 for a video, 2:3 for a comic page.
+// MediaCard is a poster and a title. A video's poster shows its duration once it's known.
 export function MediaCard({ media, onPress, style }: Props) {
   const { colors } = useTheme();
   const isVideo = media.kind === MediaKind.Video;
   return (
     <Pressable onPress={() => onPress(media)} style={({ pressed }) => [styles.card, style, pressed && styles.pressed]}>
-      <View
-        style={[
-          styles.poster,
-          { aspectRatio: isVideo ? 16 / 9 : 2 / 3, backgroundColor: isVideo ? "#2b3a55" : "#553a2b" },
-        ]}
-      >
-        <Text style={styles.glyph}>{isVideo ? "▶" : "▤"}</Text>
-        <Text style={styles.badge}>{isVideo ? "VIDEO" : "COMIC"}</Text>
-      </View>
+      <Poster media={media}>
+        <Text style={[styles.badge, styles.kind]}>{isVideo ? "VIDEO" : "COMIC"}</Text>
+        {media.video && (
+          <Text style={[styles.badge, styles.duration]}>{formatDuration(media.video.durationMs / 1000)}</Text>
+        )}
+      </Poster>
       <Text numberOfLines={2} style={[styles.title, { color: colors.text }]}>
         {media.title}
       </Text>
@@ -31,12 +29,8 @@ export function MediaCard({ media, onPress, style }: Props) {
 const styles = StyleSheet.create({
   card: { gap: 6 },
   pressed: { opacity: 0.6 },
-  poster: { borderRadius: 8, alignItems: "center", justifyContent: "center" },
-  glyph: { color: "#ffffffcc", fontSize: 28 },
   badge: {
     position: "absolute",
-    top: 6,
-    left: 6,
     color: "#fff",
     fontSize: 10,
     fontWeight: "700",
@@ -46,5 +40,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     overflow: "hidden",
   },
+  kind: { top: 6, left: 6 },
+  duration: { bottom: 6, right: 6, fontVariant: ["tabular-nums"] },
   title: { fontSize: 14, fontWeight: "500" },
 });

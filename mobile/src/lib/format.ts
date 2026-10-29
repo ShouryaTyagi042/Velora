@@ -22,3 +22,10 @@ export function formatDuration(seconds: number): string {
   const s = String(total % 60).padStart(2, "0");
   return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
 }
+
+// formatResolution names a video's size the way people do: 1080p, 4K, or 853×480.
+export function formatResolution(width: number, height: number): string {
+  if (width >= 3840) return "4K";
+  if ([2160, 1440, 1080, 720, 480].includes(height)) return `${height}p`;
+  return `${width}×${height}`;
+}
