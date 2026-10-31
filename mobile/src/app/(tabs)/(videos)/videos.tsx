@@ -6,6 +6,7 @@ import { listActors, listMedia, MediaKind } from "@/api/media";
 import { Chip } from "@/components/Chip";
 import { MediaGrid } from "@/components/MediaGrid";
 import { useAsync } from "@/hooks/useAsync";
+import { usePages } from "@/hooks/usePages";
 import { useRescan } from "@/hooks/useRescan";
 import { space } from "@/theme";
 
@@ -19,12 +20,12 @@ export default function Videos() {
   const actor = params.actor || undefined;
   const { width } = useWindowDimensions();
 
-  // A new function only when actor changes, and that is what starts a new request.
-  const fetcher = useCallback(
-    (signal: AbortSignal) => listMedia({ kind: MediaKind.Video, actor, signal }),
+  // A new function only when actor changes, and that is what starts the list again.
+  const fetchPage = useCallback(
+    (after: string | undefined, signal: AbortSignal) => listMedia({ kind: MediaKind.Video, actor, after, signal }),
     [actor],
   );
-  const { state, refreshing, refetch } = useAsync(fetcher);
+  const { state, refreshing, refetch, loadMore, loadingMore, moreError } = usePages(fetchPage);
   const actors = useAsync(fetchActors);
   const refetchBoth = () => {
     refetch();
@@ -61,6 +62,9 @@ export default function Videos() {
         refreshing={scanning || refreshing}
         onRefresh={rescan}
         onRetry={refetch}
+        onEndReached={loadMore}
+        loadingMore={loadingMore}
+        moreError={moreError}
         header={filters}
         empty={
           actor

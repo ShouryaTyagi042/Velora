@@ -82,7 +82,7 @@ func getContinue(repo media.Repository) HandlerE {
 		if err != nil {
 			return err
 		}
-		respondJSON(w, http.StatusOK, continueResponse{Watching: watching, Reading: reading})
+		respondCachedJSON(w, r, continueResponse{Watching: watching, Reading: reading})
 		return nil
 	}
 }

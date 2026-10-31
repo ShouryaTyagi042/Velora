@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 
 	"github.com/ShouryaTyagi042/Velora/server/internal/media"
 )
@@ -63,12 +64,19 @@ func (r *MediaRepo) SaveProgress(ctx context.Context, user int64, id string, p m
 }
 
 // Continue implements media.Repository. The (user_id, updated_at desc) index serves the order.
+//
+// The limit is written into the SQL, not passed as $2. With a parameter, Postgres plans this
+// seven-table join afresh on every call (about 2 ms, against 0.2 ms to run it): a plan for an
+// unknown limit looks too expensive next to one made for "limit 10", so it never settles on a
+// reusable one. As a literal, the statement is planned once per connection and reused. The
+// limit is an int, never text, so this can't inject anything. (measured in phase 12: ADR 009)
 func (r *MediaRepo) Continue(ctx context.Context, user int64, kind media.Kind, limit int) ([]media.Media, error) {
-	filter := ` and wp.media_id is not null and not wp.completed` + groupMedia + ` order by wp.updated_at desc, m.id limit $2`
+	filter := ` and wp.media_id is not null and not wp.completed order by wp.updated_at desc, m.id`
 	if kind == media.KindComic {
-		filter = ` and rp.media_id is not null and not rp.completed` + groupMedia + ` order by rp.updated_at desc, m.id limit $2`
+		filter = ` and rp.media_id is not null and not rp.completed order by rp.updated_at desc, m.id`
 	}
-	rows, err := r.db.QueryContext(ctx, selectMedia+filter, user, limit)
+	filter += ` limit ` + strconv.Itoa(limit)
+	rows, err := r.db.QueryContext(ctx, selectMedia+filter, user)
 	if err != nil {
 		return nil, err
 	}

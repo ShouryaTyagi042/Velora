@@ -89,11 +89,14 @@ Every response is JSON (`Content-Type: application/json; charset=utf-8`) and car
 | Method & path | Success | Errors |
 |---|---|---|
 | `GET /health` | `200 {"status":"ok"}` | |
-| `GET /api/media` | `200 {"items":[Media, ...]}`, sorted by title | |
-| `GET /api/media?kind=video\|comic` | `200 {"items":[...]}` of that kind | `400 validation` for any other `kind` |
-| `GET /api/media?actor=<name>` | `200 {"items":[...]}` with that actor (exact match; combines with `kind`); an unknown actor gives `[]` | `400 validation` if empty or over 200 bytes |
+| `GET /api/media` | One page: `200 {"items":[Media, ...], "nextCursor":"…"\|null}`, sorted by title. `ETag` + `Cache-Control: private, no-cache`; `If-None-Match` with the same tag gives `304` and no body | |
+| `GET /api/media?kind=video\|comic` | that kind only | `400 validation` for any other `kind` |
+| `GET /api/media?actor=<name>` | with that actor (exact match); an unknown actor gives `[]` | `400 validation` if empty or over 200 bytes |
+| `GET /api/media?q=<text>` | titles or actor names containing `text`, ignoring case and accents (`amelie` finds `Amélie`); blank is no search | `400 validation` if over 200 bytes |
+| `GET /api/media?sort=title\|recent` | `recent`: newest first (by when the scan first saw it) | `400 validation` for any other `sort` |
+| `GET /api/media?limit=<n>&after=<cursor>` | `limit` 1–200 (default 50); `after` is the previous page's `nextCursor`. All the filters combine | `400 validation` for a bad `limit`, or a cursor that isn't from this list's `sort` |
 | `GET /api/media/{id}` | `200 Media` | `404 not_found` |
-| `GET /api/media/{id}/thumbnail` | `200 image/jpeg` (a frame from 10% in, 480 px wide, `private, max-age=86400`); a comic's is its first page; `202 {"status":"pending"}` while a video's is still being made | `404 not_found` |
+| `GET /api/media/{id}/thumbnail` | `200 image/jpeg` (a frame from 10% in, 480 px wide; `private, max-age=86400`, or `private, immutable` with `?v=<the video's modTime>`); a comic's is its first page; `202 {"status":"pending"}` while a video's is still being made | `404 not_found` |
 | `GET /api/media/{id}/pages` | `200 {"pageCount":24}` | `404 not_found` if not a comic |
 | `GET /api/media/{id}/pages/{n}` | `200` the image of page `n` (0-based), with `Last-Modified`/`304` and ranges; with `?v=<modTime>` also `Cache-Control: private, immutable` | `400 validation` if `n` isn't a number; `404 not_found` if out of range, not a comic, or deleted since the scan |
 | `POST /api/media/{id}/actors` | `200 Media` with the actor added; adding one it already has is a no-op `200`. Body `{"name":"Carrie-Anne Moss"}`, 1–100 characters after trimming | `400 validation` (bad body, or a comic), `404 not_found` |
@@ -101,7 +104,7 @@ Every response is JSON (`Content-Type: application/json; charset=utf-8`) and car
 | `GET /api/actors` | `200 {"items":[{"name":"Keanu Reeves","videoCount":2}]}`: available videos per actor, both sources | |
 | `PUT /api/media/{id}/progress` | `200 Progress` as stored. Body: `{"positionMs","durationMs","clientTs"}` for a video, `{"page","pageCount","clientTs"}` for a comic. A save older (by `clientTs`) than the stored one is accepted and ignored | `400 validation`, `404 not_found` |
 | `GET /api/media/{id}/progress` | `200 Progress` | `404 not_found` if never started |
-| `GET /api/continue` | `200 {"watching":[Media],"reading":[Media]}`: the signed-in user's unfinished items, newest first, 10 each | |
+| `GET /api/continue` | `200 {"watching":[Media],"reading":[Media]}`: the signed-in user's unfinished items, newest first, 10 each. `ETag`/`304` like the list | |
 | `GET` or `HEAD /api/media/{id}/stream` | `200` whole video, or `206 Partial Content` for a `Range: bytes=…` request (seeking); `304` for a matching `If-Modified-Since`. `Content-Type` comes from the file's extension; `Accept-Ranges: bytes` on every response | `404 not_found` for an unknown id, a comic, or a file deleted since the last scan; `416` for a range past the end |
 | `POST /api/scan` | `200 {"found":6,"warnings":[...]}` after rescanning `VELORA_MEDIA_DIR`; blocks until done | `500 internal` if the folder can't be read |
 

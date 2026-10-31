@@ -50,9 +50,15 @@ func getThumbnail(repo media.Repository, files, thumbs fs.FS) HandlerE {
 		if !ok {
 			return fmt.Errorf("thumbnail %s: file does not support seeking", m.ID)
 		}
-		// A day, then revalidate with If-Modified-Since: a re-extracted thumbnail keeps its URL.
+		// The app asks for ?v=<the video's modTime>. The thumbnail is a frame of the video, so it
+		// changes only when the video does, and then so does the URL: safe to keep forever. A bare
+		// URL keeps the old rule: a day, then revalidate with If-Modified-Since.
 		// private: cached by the phone only, never by a proxy, since the request carried a token.
-		w.Header().Set("Cache-Control", "private, max-age=86400")
+		if r.URL.Query().Get("v") != "" {
+			w.Header().Set("Cache-Control", cacheForever)
+		} else {
+			w.Header().Set("Cache-Control", "private, max-age=86400")
+		}
 		w.Header().Set("Content-Type", "image/jpeg")
 		http.ServeContent(w, r, m.ID+".jpg", info.ModTime(), content)
 		return nil

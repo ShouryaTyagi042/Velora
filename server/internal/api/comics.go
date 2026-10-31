@@ -96,7 +96,7 @@ func servePage(w http.ResponseWriter, r *http.Request, files fs.FS, m media.Medi
 	// any page does, so a changed page gets a new URL. A bare URL must revalidate (Last-Modified).
 	// private: the phone may cache a page, a shared proxy must not (it was fetched with a token).
 	if r.URL.Query().Get("v") != "" {
-		w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+		w.Header().Set("Cache-Control", cacheForever)
 	}
 	w.Header().Set("Content-Type", comics.ContentType(name))
 	http.ServeContent(w, r, name, info.ModTime(), content)

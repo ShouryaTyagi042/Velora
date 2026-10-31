@@ -18,9 +18,12 @@ const COVER_WIDTH = 110; // a 2:3 comic cover is tall, so it gets a narrower car
 
 // Defined outside the component: the same function every render, so neither the list
 // nor its rows re-render just because Home did.
+// Each row asks the server for exactly what it shows: the newest few of one kind, by when Velora
+// first saw them. (Before phase 12 Home fetched the whole library and sorted it here.)
 const fetchHome = async (signal: AbortSignal) => {
-  const [all, cont] = await Promise.all([listMedia({ signal }), getContinue({ signal })]);
-  return { all, ...cont };
+  const recent = (kind: MediaKind) => listMedia({ kind, sort: "recent", limit: RECENT_COUNT, signal });
+  const [videos, comics, cont] = await Promise.all([recent(MediaKind.Video), recent(MediaKind.Comic), getContinue({ signal })]);
+  return { videos: videos.items, comics: comics.items, ...cont };
 };
 const openMedia = (m: Media) => router.push({ pathname: "/media/[id]", params: { id: m.id } });
 const resume = (m: Media) =>
@@ -46,7 +49,7 @@ export default function Home() {
     <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.content}>
       {state.status === "loading" ? (
         <HomeSkeleton />
-      ) : state.data.all.length === 0 ? (
+      ) : state.data.videos.length === 0 && state.data.comics.length === 0 ? (
         <EmptyView
           title="Your library is empty"
           detail="Put videos in movies/ and comics in comics/ inside the folder velora-server serves, then open Videos or Comics and pull down to rescan."
@@ -56,20 +59,12 @@ export default function Home() {
         <>
           <Row title="Continue watching" items={state.data.watching} render={renderResume} />
           <Row title="Continue reading" items={state.data.reading} render={renderResume} />
-          <Row title="New videos" items={recent(state.data.all, MediaKind.Video)} render={renderCard} />
-          <Row title="New comics" items={recent(state.data.all, MediaKind.Comic)} render={renderCard} />
+          <Row title="New videos" items={state.data.videos} render={renderCard} />
+          <Row title="New comics" items={state.data.comics} render={renderCard} />
         </>
       )}
     </ScrollView>
   );
-}
-
-// recent is the newest items of one kind, by when Velora first saw them. (The server sorts by title.)
-function recent(all: Media[], kind: MediaKind): Media[] {
-  return all
-    .filter((m) => m.kind === kind)
-    .sort((a, b) => Date.parse(b.addedAt) - Date.parse(a.addedAt))
-    .slice(0, RECENT_COUNT);
 }
 
 type RowProps = { title: string; items: Media[]; render: (info: { item: Media }) => React.ReactElement };

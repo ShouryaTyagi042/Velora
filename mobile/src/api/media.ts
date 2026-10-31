@@ -51,15 +51,31 @@ export type Media = {
   progress?: Progress; // once started
 };
 
-export type ListOptions = { kind?: MediaKind; actor?: string; signal?: AbortSignal };
+export type ListOptions = {
+  kind?: MediaKind;
+  actor?: string;
+  q?: string; // search titles and actors, ignoring case and accents
+  sort?: "title" | "recent"; // title by default
+  limit?: number; // the server's default is 50, its maximum 200
+  after?: string; // the previous page's nextCursor
+  signal?: AbortSignal;
+};
 
-export async function listMedia({ kind, actor, signal }: ListOptions = {}): Promise<Media[]> {
+// Page is one page of a list. nextCursor is null on the last page; pass it as `after` for the next.
+export type Page<T> = { items: T[]; nextCursor: string | null };
+
+// listMedia is one page of the library. The server never sends the whole thing: at 100k items that
+// was 33 MB for a screen showing a dozen cards (phase 12).
+export function listMedia({ kind, actor, q, sort, limit, after, signal }: ListOptions = {}): Promise<Page<Media>> {
   const params = new URLSearchParams();
   if (kind) params.set("kind", kind);
   if (actor) params.set("actor", actor);
+  if (q) params.set("q", q);
+  if (sort) params.set("sort", sort);
+  if (limit) params.set("limit", String(limit));
+  if (after) params.set("after", after);
   const qs = params.toString(); // encodes spaces as "+", which Go's Query() decodes back
-  const body = await getJSON<{ items: Media[] }>(`/api/media${qs ? `?${qs}` : ""}`, { signal });
-  return body.items;
+  return getJSON<Page<Media>>(`/api/media${qs ? `?${qs}` : ""}`, { signal });
 }
 
 export function getMedia(id: string, { signal }: { signal?: AbortSignal } = {}): Promise<Media> {

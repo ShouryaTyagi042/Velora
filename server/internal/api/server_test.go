@@ -64,6 +64,13 @@ func TestEndpoints(t *testing.T) {
 		{"list unknown actor", "/api/media?actor=Nobody", 200, ""},
 		{"list empty actor", "/api/media?actor=", 400, "validation"},
 		{"list huge actor", "/api/media?actor=" + strings.Repeat("a", 201), 400, "validation"},
+		{"list huge q", "/api/media?q=" + strings.Repeat("a", 201), 400, "validation"},
+		{"list bad sort", "/api/media?sort=size", 400, "validation"},
+		{"list limit 0", "/api/media?limit=0", 400, "validation"},
+		{"list limit too big", "/api/media?limit=201", 400, "validation"},
+		{"list limit not a number", "/api/media?limit=ten", 400, "validation"},
+		{"list cursor not base64", "/api/media?after=%25%25", 400, "validation"},
+		{"list cursor from the other sort", "/api/media?sort=recent&after=" + encodeCursor(media.SortTitle, "v1"), 400, "validation"},
 		{"get existing", "/api/media/v1", 200, ""},
 		{"get missing", "/api/media/nope", 404, "not_found"},
 		{"thumbnail pending", "/api/media/v1/thumbnail", 202, ""},
@@ -114,6 +121,10 @@ func TestListFilters(t *testing.T) {
 		{"?actor=Keanu%20Reeves&kind=comic", []string{}},
 		{"?actor=keanu%20reeves", []string{}}, // exact match: case matters
 		{"?actor=Nobody", []string{}},
+		{"?q=STELL", []string{"v2"}},              // search: title, any case
+		{"?q=keanu", []string{"v1"}},              // search: actor
+		{"?q=%20%20", []string{"v2", "v1", "c1"}}, // a blank search is no search
+		{"?limit=2", []string{"v2", "v1"}},
 	}
 	h := newTestHandler()
 	for _, tt := range tests {
@@ -221,10 +232,82 @@ func TestVideoThumbnail(t *testing.T) {
 	if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/jpeg" || rec.Header().Get("Cache-Control") != "private, max-age=86400" {
 		t.Errorf("ready: got %d %v", rec.Code, rec.Header())
 	}
+	// Versioned, as the app asks for it: the URL changes with the video, so it's kept forever.
+	rec = get(t, newTestHandler(), "/api/media/v2/thumbnail?v=2026-10-01T12:00:00Z")
+	if rec.Code != 200 || rec.Header().Get("Cache-Control") != cacheForever {
+		t.Errorf("versioned: got %d %v, want 200 and %q", rec.Code, rec.Header(), cacheForever)
+	}
 
 	rec = httptest.NewRecorder()
 	newTestHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/media/v1/thumbnail", nil))
 	if rec.Code != 202 || rec.Header().Get("Cache-Control") != "no-store" {
 		t.Errorf("pending: got %d %v, want 202 and no-store", rec.Code, rec.Header())
+	}
+}
+
+// get is one signed-in GET through h, with optional request headers as name, value pairs.
+func get(t *testing.T, h http.Handler, path string, header ...string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	for i := 0; i+1 < len(header); i += 2 {
+		req.Header.Set(header[i], header[i+1])
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestListPaging(t *testing.T) {
+	h := newTestHandler()
+	var ids []string
+	path := "/api/media?limit=1"
+	for range 10 { // 3 items, one per page
+		rec := get(t, h, path)
+		var body listResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != 200 {
+			t.Fatalf("%s: %d %s", path, rec.Code, rec.Body)
+		}
+		for _, m := range body.Items {
+			ids = append(ids, m.ID)
+		}
+		if body.NextCursor == nil {
+			break
+		}
+		path = "/api/media?limit=1&after=" + *body.NextCursor
+	}
+	if want := []string{"v2", "v1", "c1"}; !slices.Equal(ids, want) {
+		t.Errorf("paged ids = %v, want %v", ids, want)
+	}
+
+	// A page that ends exactly at the last item says so: no cursor to an empty page.
+	rec := get(t, h, "/api/media?limit=3")
+	if !strings.Contains(rec.Body.String(), `"nextCursor":null`) {
+		t.Errorf("full last page: %s, want nextCursor null", rec.Body)
+	}
+}
+
+func TestListRevalidation(t *testing.T) {
+	h := newTestHandler()
+	for _, path := range []string{"/api/media?kind=video", "/api/continue"} {
+		first := get(t, h, path)
+		etag := first.Header().Get("ETag")
+		if first.Code != 200 || etag == "" || first.Header().Get("Cache-Control") != cacheRevalidate {
+			t.Fatalf("%s: %d, ETag %q, Cache-Control %q", path, first.Code, etag, first.Header().Get("Cache-Control"))
+		}
+		for _, inm := range []string{etag, "W/" + etag, `"other", ` + etag, "*"} {
+			rec := get(t, h, path, "If-None-Match", inm)
+			if rec.Code != http.StatusNotModified || rec.Body.Len() != 0 || rec.Header().Get("ETag") != etag {
+				t.Errorf("%s If-None-Match %s: %d, %d bytes, ETag %q; want 304, empty, same ETag",
+					path, inm, rec.Code, rec.Body.Len(), rec.Header().Get("ETag"))
+			}
+		}
+		if rec := get(t, h, path, "If-None-Match", `"stale"`); rec.Code != 200 || rec.Body.String() != first.Body.String() {
+			t.Errorf("%s with a stale ETag: %d, want 200 and the full body", path, rec.Code)
+		}
+	}
+
+	// The tag follows the content: a different page has a different one.
+	if get(t, h, "/api/media?kind=video").Header().Get("ETag") == get(t, h, "/api/media?kind=comic").Header().Get("ETag") {
+		t.Error("two different lists share an ETag")
 	}
 }

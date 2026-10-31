@@ -12,7 +12,7 @@ import (
 // attach. It's a parameter, not a context value: a forgotten user is a compile error, not
 // silently missing progress. User 0 is nobody: no progress attached.
 type Repository interface {
-	// List returns the media matching f, sorted by title.
+	// List returns the media matching f, in f.Sort order, starting after f.After, at most f.Limit.
 	List(ctx context.Context, user int64, f ListFilter) ([]Media, error)
 	// Get returns the media with the given id, or ErrNotFound.
 	Get(ctx context.Context, user int64, id string) (Media, error)
@@ -42,11 +42,33 @@ type Syncer interface {
 	Sync(ctx context.Context, items []Media, scannedAt time.Time) (SyncResult, error)
 }
 
-// ListFilter narrows List. Zero values match everything.
+// ListFilter narrows and pages List. Zero values match everything, sorted by title, unpaged.
 type ListFilter struct {
 	Kind  Kind   // "" for all kinds
 	Actor string // exact name, any source; "" for all
+	// Query matches a title or an actor name containing it, ignoring case and accents
+	// ("amelie" finds "Amélie"). "" for all.
+	Query string
+	Sort  Sort
+	// After is the id of the last item of the previous page: the list continues right after it
+	// in Sort order. "" starts at the beginning. Each store finds that item's sort key itself, so
+	// the key is never recomputed outside the database (Go's ToLower and Postgres's lower() can
+	// disagree on non-ASCII titles). Media are never deleted, so the id always resolves.
+	After string
+	Limit int // at most this many items; 0 for all
 }
+
+// Sort is the order List returns items in. Every order ends with the id, so it is total:
+// two items never tie, and a page boundary can't skip or repeat one.
+type Sort string
+
+const (
+	SortTitle  Sort = ""       // by title, case-insensitive, then id
+	SortRecent Sort = "recent" // newest AddedAt first, then id descending
+)
+
+// Valid reports whether s is a known order.
+func (s Sort) Valid() bool { return s == SortTitle || s == SortRecent }
 
 // ActorCount is one row of GET /api/actors.
 type ActorCount struct {

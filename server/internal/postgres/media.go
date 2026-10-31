@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -32,11 +33,15 @@ type querier interface {
 }
 
 // selectMedia reads media with their comic pages, video metadata, progress and actors, one row
-// per item. $1 is the user whose progress to join (0 matches no rows: no progress). The actors are
-// aggregated into a JSON array in the same query, so a page of 50 items is one query, not 51 (N+1).
-// The folder actor comes first (false sorts before true), then manual ones by name.
-// Left joins keep comics and actor-less videos; the filter stops json_agg from producing
-// [{"name":null,"source":null}] for them.
+// per item. $1 is the user whose progress to join (0 matches no rows: no progress).
+//
+// The actors come from a subquery per row, aggregated into a JSON array, so a page of 50 items is
+// still one query, not 51 (N+1). It used to be a join plus GROUP BY over the whole query, and that
+// is what made paging impossible: Postgres had to build and group every matching row before it
+// could sort them and apply LIMIT (at 100k rows: 800 ms and a 25 MB sort on disk for 50 items).
+// Without the GROUP BY, it walks an index in the requested order and stops after LIMIT rows,
+// running the subquery only for those. The folder actor comes first (false sorts before true),
+// then manual ones by name; json_agg over no rows is null, hence the coalesce.
 const selectMedia = `
 select m.id, m.fingerprint, m.kind, m.title, m.rel_path, coalesce(m.mime_type, ''), m.size_bytes,
        m.mod_time, m.added_at, cm.page_count, cm.pages,
@@ -44,30 +49,73 @@ select m.id, m.fingerprint, m.kind, m.title, m.rel_path, coalesce(m.mime_type, '
        coalesce(vm.height, 0), coalesce(vm.codec, ''), coalesce(vm.fps, 0)::float8,
        coalesce(wp.updated_at, rp.updated_at), coalesce(wp.position_ms, 0), coalesce(wp.duration_ms, 0),
        coalesce(rp.page, 0), coalesce(rp.page_count, 0), coalesce(wp.completed, rp.completed, false),
-       coalesce(json_agg(json_build_object('name', a.name, 'source', ma.source)
-                         order by ma.source = 'manual', a.name)
-                  filter (where a.id is not null), '[]')
+       coalesce((select json_agg(json_build_object('name', a.name, 'source', ma.source)
+                                 order by ma.source = 'manual', a.name)
+                 from media_actors ma join actors a on a.id = ma.actor_id
+                 where ma.media_id = m.id), '[]')
 from media m
 left join comic_metadata cm on cm.media_id = m.id
 left join video_metadata vm on vm.media_id = m.id
 left join watch_progress wp   on wp.media_id = m.id and wp.user_id = $1
 left join reading_progress rp on rp.media_id = m.id and rp.user_id = $1
-left join media_actors ma   on ma.media_id = m.id
-left join actors a          on a.id = ma.actor_id
 where m.missing_since is null`
 
-const groupMedia = `
-group by m.id, cm.media_id, vm.media_id, wp.user_id, wp.media_id, rp.user_id, rp.media_id`
-
-// List implements media.Repository. Both filters run in SQL. The actor filter is an exists, not a
-// join, so the aggregate still sees every actor of a matching video.
+// List implements media.Repository. Filters, order and paging all run in SQL.
+//
+// The statement is assembled from fixed pieces, one per filter actually set, rather than one
+// statement with a catch-all condition per filter (kind matches $2, or $2 is empty). That catch-all form gets a single
+// cached plan that has to work whether the kind is set or not, so it can't seek the
+// (kind, title) index. Values are always parameters; only the fixed SQL text varies.
 func (r *MediaRepo) List(ctx context.Context, user int64, f media.ListFilter) ([]media.Media, error) {
-	rows, err := r.db.QueryContext(ctx, selectMedia+`
-  and ($2::text = '' or m.kind = $2)
-  and ($3::text = '' or exists (
-        select 1 from media_actors ma2 join actors a2 on a2.id = ma2.actor_id
-        where ma2.media_id = m.id and a2.name = $3))`+groupMedia+`
-order by lower(m.title), m.id`, user, string(f.Kind), f.Actor)
+	q := selectMedia
+	args := []any{user}
+	param := func(v any) string {
+		args = append(args, v)
+		return "$" + strconv.Itoa(len(args))
+	}
+
+	if f.Kind != "" {
+		q += ` and m.kind = ` + param(string(f.Kind))
+	}
+	if f.Actor != "" {
+		// An exists, not a join: the subquery in selectMedia still sees every actor of the video.
+		q += ` and exists (select 1 from media_actors ma2 join actors a2 on a2.id = ma2.actor_id
+		                   where ma2.media_id = m.id and a2.name = ` + param(f.Actor) + `)`
+	}
+	if f.Query != "" {
+		// like, with the user's % and _ escaped, so they match themselves.
+		p := param("%" + escapeLike(f.Query) + "%")
+		q += ` and (velora_fold(m.title) like velora_fold(` + p + `)
+		       or exists (select 1 from media_actors ma3 join actors a3 on a3.id = ma3.actor_id
+		                  where ma3.media_id = m.id and velora_fold(a3.name) like velora_fold(` + p + `)))`
+	}
+	if f.After != "" {
+		after, ok := parseID(f.After)
+		if !ok {
+			return []media.Media{}, nil // not an id this store hands out: nothing comes after it
+		}
+		// The cursor row's own sort key, read from the database. Row comparison (a, b) > (c, d)
+		// means a > c, or a = c and b > d: exactly "after it" in a two-column order. An id that
+		// doesn't exist gives no row, the comparison is null, and the page is empty.
+		if f.Sort == media.SortRecent {
+			q += ` and (m.added_at, m.id) < (select added_at, id from media where id = ` + param(after) + `)`
+		} else {
+			q += ` and (lower(m.title), m.id) > (select lower(title), id from media where id = ` + param(after) + `)`
+		}
+	}
+	if f.Sort == media.SortRecent {
+		q += ` order by m.added_at desc, m.id desc`
+	} else {
+		q += ` order by lower(m.title), m.id`
+	}
+	if f.Limit > 0 {
+		// A literal, not a parameter, for the reason in Continue: with "limit $n" Postgres re-plans
+		// the statement on every call (measured: 0.9 ms a page against 0.16 ms on the real
+		// library). Clients use a few limits, so this adds a few cached statements, not hundreds.
+		q += ` limit ` + strconv.Itoa(f.Limit)
+	}
+
+	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +143,7 @@ func (r *MediaRepo) get(ctx context.Context, q querier, user int64, id string) (
 	if !ok {
 		return media.Media{}, media.ErrNotFound
 	}
-	m, err := r.scanMedia(q.QueryRowContext(ctx, selectMedia+` and m.id = $2`+groupMedia, user, n))
+	m, err := r.scanMedia(q.QueryRowContext(ctx, selectMedia+` and m.id = $2`, user, n))
 	if errors.Is(err, sql.ErrNoRows) {
 		return media.Media{}, media.ErrNotFound
 	}
@@ -347,4 +395,10 @@ func isNoRows(err error) bool { return errors.Is(err, sql.ErrNoRows) }
 func parseID(id string) (int64, bool) {
 	n, err := strconv.ParseInt(id, 10, 64)
 	return n, err == nil && n > 0
+}
+
+// escapeLike makes s match itself literally inside a like pattern: \ is like's default escape
+// character, and % and _ are its wildcards.
+func escapeLike(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }

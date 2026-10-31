@@ -243,6 +243,92 @@ func Run(t *testing.T, open func(t *testing.T) Store) {
 		actors(t, s, []media.ActorCount{count("Keanu Reeves", 2), count("Matthew McConaughey", 1)})
 	})
 
+	t.Run("search ignores case and accents", func(t *testing.T) {
+		s := open(t)
+		lib := append(Library(), video("movies/Amélie.mp4", "Amélie", ""))
+		if _, err := s.Sync(ctx, lib, t0); err != nil {
+			t.Fatal(err)
+		}
+		tests := []struct {
+			f    media.ListFilter
+			want []string
+		}{
+			{media.ListFilter{Query: "MATRIX"}, []string{"The Matrix"}},
+			{media.ListFilter{Query: "amelie"}, []string{"Amélie"}},                 // accent in the title
+			{media.ListFilter{Query: "AMÉL"}, []string{"Amélie"}},                   // accent in the query
+			{media.ListFilter{Query: "keanu"}, []string{"John Wick", "The Matrix"}}, // by actor
+			{media.ListFilter{Query: "i", Kind: media.KindComic}, nil},              // filters combine
+			{media.ListFilter{Query: "%"}, nil},                                     // % is a character, not a wildcard
+			{media.ListFilter{Query: "_"}, nil},
+		}
+		for _, tt := range tests {
+			if got := titles(list(t, s, tt.f)); !slices.Equal(got, tt.want) {
+				t.Errorf("List(%+v) = %v, want %v", tt.f, got, tt.want)
+			}
+		}
+	})
+
+	t.Run("pages by title join up", func(t *testing.T) {
+		s := seeded(t)
+		var got []string
+		f := media.ListFilter{Limit: 2}
+		for range 10 { // 5 items in pages of 2: three pages, then an empty one
+			page := list(t, s, f)
+			if len(page) == 0 {
+				break
+			}
+			got = append(got, titles(page)...)
+			f.After = page[len(page)-1].ID
+		}
+		want := []string{"Interstellar", "John Wick", "Loose Clip", "The Matrix", "Watchmen"}
+		if !slices.Equal(got, want) {
+			t.Errorf("pages joined = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("pages newest first", func(t *testing.T) {
+		s := open(t)
+		// Three scans, each finding more: Watchmen first, then Loose Clip and John Wick, then the
+		// rest. Each item's AddedAt is its first scan, so newest first is the reverse.
+		lib := Library() // The Matrix, John Wick, Interstellar, Loose Clip, Watchmen
+		scans := [][]media.Media{{lib[4]}, {lib[4], lib[3], lib[1]}, lib}
+		for i, items := range scans {
+			if _, err := s.Sync(ctx, items, t0.Add(time.Duration(i)*time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Pages of 1, so every boundary is crossed, including the tie inside each scan (broken by id).
+		var got []string
+		f := media.ListFilter{Sort: media.SortRecent, Kind: media.KindVideo, Limit: 1}
+		for range 10 {
+			page := list(t, s, f)
+			if len(page) == 0 {
+				break
+			}
+			got = append(got, page[0].Title)
+			f.After = page[0].ID
+		}
+		if len(got) != 4 {
+			t.Fatalf("paged %v, want 4 videos", got)
+		}
+		newest, older := got[:2], got[2:]
+		slices.Sort(newest)
+		slices.Sort(older)
+		if !slices.Equal(newest, []string{"Interstellar", "The Matrix"}) || !slices.Equal(older, []string{"John Wick", "Loose Clip"}) {
+			t.Errorf("newest first = %v, want Interstellar and The Matrix (either order), then John Wick and Loose Clip", got)
+		}
+	})
+
+	t.Run("after an unknown id is empty", func(t *testing.T) {
+		s := seeded(t)
+		for _, id := range []string{"999999", "fp:nope"} {
+			got := list(t, s, media.ListFilter{After: id})
+			if got == nil || len(got) != 0 {
+				t.Errorf("List(After: %q) = %v, want []", id, titles(got))
+			}
+		}
+	})
+
 	t.Run("missing files drop out but keep their id", func(t *testing.T) {
 		s := seeded(t)
 		matrix := byTitle(t, s, "The Matrix")

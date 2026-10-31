@@ -78,23 +78,60 @@ func (s *Store) Sync(ctx context.Context, items []media.Media, scannedAt time.Ti
 // List returns a copy of every available item matching f, sorted by title (case-insensitive,
 // then by id so equal titles keep a stable order).
 func (s *Store) List(ctx context.Context, user int64, f media.ListFilter) ([]media.Media, error) {
+	order := byTitle
+	if f.Sort == media.SortRecent {
+		order = byRecent
+	}
+	q := media.Fold(f.Query)
+
 	s.mu.RLock()
+	// The cursor item, found even if it has since gone missing: its sort key still places it.
+	var after *media.Media
+	if f.After != "" {
+		e, ok := s.items[f.After]
+		if !ok {
+			s.mu.RUnlock()
+			return []media.Media{}, nil // an id that never existed: nothing comes after it
+		}
+		after = &e.m
+	}
 	out := make([]media.Media, 0, len(s.items))
 	for _, e := range s.items {
-		if e.missing || (f.Kind != "" && e.m.Kind != f.Kind) || (f.Actor != "" && !e.m.HasActor(f.Actor)) {
+		if e.missing || (f.Kind != "" && e.m.Kind != f.Kind) || (f.Actor != "" && !e.m.HasActor(f.Actor)) ||
+			(q != "" && !matches(e.m, q)) || (after != nil && order(e.m, *after) <= 0) {
 			continue
 		}
 		out = append(out, s.withProgress(user, e.m))
 	}
 	s.mu.RUnlock()
 
-	slices.SortFunc(out, func(a, b media.Media) int {
-		return cmp.Or(
-			strings.Compare(strings.ToLower(a.Title), strings.ToLower(b.Title)),
-			strings.Compare(a.ID, b.ID),
-		)
-	})
+	slices.SortFunc(out, order)
+	if f.Limit > 0 && len(out) > f.Limit {
+		out = out[:f.Limit]
+	}
 	return out, nil
+}
+
+// byTitle and byRecent are List's orders (media.SortTitle, media.SortRecent).
+func byTitle(a, b media.Media) int {
+	return cmp.Or(strings.Compare(strings.ToLower(a.Title), strings.ToLower(b.Title)), strings.Compare(a.ID, b.ID))
+}
+
+func byRecent(a, b media.Media) int {
+	return cmp.Or(b.AddedAt.Compare(a.AddedAt), strings.Compare(b.ID, a.ID))
+}
+
+// matches reports whether m's title or one of its actors contains q, which is already folded.
+func matches(m media.Media, q string) bool {
+	if strings.Contains(media.Fold(m.Title), q) {
+		return true
+	}
+	for _, a := range m.Actors {
+		if strings.Contains(media.Fold(a.Name), q) {
+			return true
+		}
+	}
+	return false
 }
 
 // Get returns the available item with the given id, or media.ErrNotFound.
