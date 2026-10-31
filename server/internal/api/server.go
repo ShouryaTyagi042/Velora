@@ -9,10 +9,10 @@ import (
 )
 
 // NewHandler returns the HTTP handler for the whole API: routes wrapped in middleware.
-// It depends on interfaces (media.Repository, Rescanner, fs.FS, Authenticator), never on a
+// It depends on interfaces (media.Repository, Jobs, fs.FS, Authenticator), never on a
 // concrete store, scanner or directory. files is the media library; media RelPaths are opened
 // inside it. thumbs holds the extractor's video thumbnails, {id}.jpg.
-func NewHandler(repo media.Repository, lib Rescanner, files, thumbs fs.FS, authn Authenticator) http.Handler {
+func NewHandler(repo media.Repository, js Jobs, files, thumbs fs.FS, authn Authenticator) http.Handler {
 	// Everything on this mux needs a session: it's mounted below behind requireUser, so a new
 	// route is protected by default and can't be forgotten.
 	mux := http.NewServeMux()
@@ -30,7 +30,9 @@ func NewHandler(repo media.Repository, lib Rescanner, files, thumbs fs.FS, authn
 	mux.Handle("GET /api/media/{id}/stream", streamVideo(repo, files, http.ServeContent)) // GET patterns also match HEAD
 	mux.Handle("GET /api/media/{id}/pages", listPages(repo))
 	mux.Handle("GET /api/media/{id}/pages/{n}", getPage(repo, files))
-	mux.Handle("POST /api/scan", scanLibrary(lib))
+	mux.Handle("POST /api/scan", scanLibrary(js))
+	mux.Handle("GET /api/jobs", listJobs(js))
+	mux.Handle("GET /api/jobs/{id}", getJob(js))
 
 	// The only routes open without a session: the health check, and signing in.
 	// "POST /api/auth/login" is more specific than "/api/", so the mux picks it first.

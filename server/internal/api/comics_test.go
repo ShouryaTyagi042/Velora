@@ -48,7 +48,7 @@ func comicHandler(t *testing.T) (http.Handler, string) {
 			Comic: &media.ComicMeta{PageCount: 3, Pages: []string{"page-1.png", "page-2.png", "page-3.png"}}}, // page-3 deleted since the scan
 		{ID: "v1", Title: "The Matrix", Kind: media.KindVideo, RelPath: "movies/The Matrix.mp4"},
 	})
-	return signedInHandler(repo, fakeRescanner{}, root.FS(), fstest.MapFS{}), dir
+	return signedInHandler(repo, newFakeJobs(nil, nil), root.FS(), fstest.MapFS{}), dir
 }
 
 func TestPages(t *testing.T) {

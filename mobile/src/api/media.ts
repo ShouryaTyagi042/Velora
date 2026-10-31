@@ -102,10 +102,25 @@ export async function listActors({ signal }: { signal?: AbortSignal } = {}): Pro
   return body.items;
 }
 
-// scanLibrary asks the server to rescan its folder now (new, renamed and removed files), and
-// resolves once the scan is saved.
-export function scanLibrary(): Promise<{ found: number; warnings: string[] }> {
-  return sendJSON("POST", "/api/scan");
+// Job is background work on the server (server/internal/jobs): a scan, or a round of extraction.
+export type Job = {
+  id: string;
+  name: string;
+  status: "running" | "done" | "failed" | "canceled";
+  progress?: { done: number; total: number };
+  error?: string;
+};
+
+// scanLibrary asks the server to rescan its folder (new, renamed and removed files). It answers
+// at once with the scan's job, before the scan is done: getJob says when it is. If a scan is
+// already running, that is the job you get.
+export function scanLibrary(): Promise<Job> {
+  return sendJSON<Job>("POST", "/api/scan");
+}
+
+// getJob is a job's current status. A 404 means the server has restarted since and forgotten it.
+export function getJob(id: string, { signal }: { signal?: AbortSignal } = {}): Promise<Job> {
+  return getJSON<Job>(`/api/jobs/${encodeURIComponent(id)}`, { signal });
 }
 
 // parseKind turns a route param back into a MediaKind; anything else means "all".

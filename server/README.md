@@ -36,6 +36,7 @@ On start the server applies any new migrations (`migrations/*.sql`, embedded in 
 | `VELORA_CORS_ORIGINS` | *(none)* | Comma-separated browser origins allowed to call the API, e.g. `http://localhost:8081` for Expo web. Only browsers enforce CORS; the phone app doesn't need it. Never `*`. |
 | `VELORA_DATABASE_URL` | *(required)* | Postgres DSN, e.g. `postgres://velora:velora-dev@localhost:5432/velora?sslmode=disable`. It holds a password: it is logged only redacted (`postgres://velora:xxxxx@…`) and never sent to a client. |
 | `VELORA_CACHE_DIR` | the OS cache dir + `/velora` | Velora's own derived files: `thumbs/{id}.jpg`. If you delete it, also `delete from video_metadata`, or the extractor won't redo videos it already finished. |
+| `VELORA_WORKERS` | half the CPUs | How many videos have metadata and thumbnails extracted at once (1–64). |
 | `VELORA_TEST_DSN` | *(none)* | Tests only: a database the Postgres tests may wipe. Unset, they skip. |
 
 `.env.example` documents the variables. `make run` and `make test` load `.env`; plain `go run` doesn't. `make run` defaults `VELORA_MEDIA_DIR` to `~/velora-media` and `VELORA_CORS_ORIGINS` to `http://localhost:8081`.
@@ -106,7 +107,9 @@ Every response is JSON (`Content-Type: application/json; charset=utf-8`) and car
 | `GET /api/media/{id}/progress` | `200 Progress` | `404 not_found` if never started |
 | `GET /api/continue` | `200 {"watching":[Media],"reading":[Media]}`: the signed-in user's unfinished items, newest first, 10 each. `ETag`/`304` like the list | |
 | `GET` or `HEAD /api/media/{id}/stream` | `200` whole video, or `206 Partial Content` for a `Range: bytes=…` request (seeking); `304` for a matching `If-Modified-Since`. `Content-Type` comes from the file's extension; `Accept-Ranges: bytes` on every response | `404 not_found` for an unknown id, a comic, or a file deleted since the last scan; `416` for a range past the end |
-| `POST /api/scan` | `200 {"found":6,"warnings":[...]}` after rescanning `VELORA_MEDIA_DIR`; blocks until done | `500 internal` if the folder can't be read |
+| `POST /api/scan` | `202 Job` at once, with `Location: /api/jobs/{id}`; the scan of `VELORA_MEDIA_DIR` runs in the background. While one runs, every request gets that same job. When done, the job's `result` is `{"found":6,"missing":0,"warnings":[...]}` | |
+| `GET /api/jobs/{id}` | `200 {"id":"j_…","name":"scan","status":"running","startedAt":…}`. `status` is `running`, `done`, `failed` (the server log has why) or `canceled` (shutdown); `progress: {"done":120,"total":200}` while known. `Cache-Control: no-store` | `404 not_found`: unknown, or forgotten (the last 50 jobs are kept, in memory) |
+| `GET /api/jobs` | `200 {"items":[Job, ...]}`, newest first: scans, and extraction rounds (`"name":"extract"`) | |
 
 Any other method on a known path returns `405`. Unknown paths return the mux's plain-text `404` (under `/api/`, only once signed in). Images are `Cache-Control: private`: the phone may cache them, a shared proxy must not, since they were fetched with a token.
 

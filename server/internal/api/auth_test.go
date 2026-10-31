@@ -39,9 +39,9 @@ func newTestAuth() (*auth.Service, string) {
 
 // signedInHandler is NewHandler with every request that has no Authorization header sent as
 // testUser, so the endpoint tests test endpoints rather than repeat the header.
-func signedInHandler(repo media.Repository, lib Rescanner, files, thumbs fs.FS) http.Handler {
+func signedInHandler(repo media.Repository, js Jobs, files, thumbs fs.FS) http.Handler {
 	a, token := newTestAuth()
-	h := NewHandler(repo, lib, files, thumbs, a)
+	h := NewHandler(repo, js, files, thumbs, a)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") == "" {
 			r.Header.Set("Authorization", "Bearer "+token)
@@ -64,7 +64,7 @@ func rawHandler() (http.Handler, string) {
 	a, token := newTestAuth()
 	return NewHandler(memstore.New([]media.Media{
 		{ID: "v1", Title: "The Matrix", Kind: media.KindVideo, RelPath: "movies/The Matrix.mp4"},
-	}), fakeRescanner{}, fstest.MapFS{}, fstest.MapFS{}, a), token
+	}), newFakeJobs(nil, nil), fstest.MapFS{}, fstest.MapFS{}, a), token
 }
 
 func do(h http.Handler, method, path, body, authz string) *httptest.ResponseRecorder {
@@ -226,7 +226,7 @@ func TestProgressBelongsToTheSignedInUser(t *testing.T) {
 	}
 	h := NewHandler(memstore.New([]media.Media{
 		{ID: "v1", Title: "The Matrix", Kind: media.KindVideo, RelPath: "movies/The Matrix.mp4"},
-	}), fakeRescanner{}, fstest.MapFS{}, fstest.MapFS{}, a)
+	}), newFakeJobs(nil, nil), fstest.MapFS{}, fstest.MapFS{}, a)
 
 	save := `{"positionMs":60000,"durationMs":600000,"clientTs":"2026-10-01T00:00:00Z"}`
 	if rec := do(h, "PUT", "/api/media/v1/progress", save, tokens["ana"]); rec.Code != 200 {

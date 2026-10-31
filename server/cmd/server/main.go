@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -20,9 +21,9 @@ import (
 	"github.com/ShouryaTyagi042/Velora/server/internal/auth"
 	"github.com/ShouryaTyagi042/Velora/server/internal/extractor"
 	"github.com/ShouryaTyagi042/Velora/server/internal/ffmpeg"
-	"github.com/ShouryaTyagi042/Velora/server/internal/media"
+	"github.com/ShouryaTyagi042/Velora/server/internal/jobs"
+	"github.com/ShouryaTyagi042/Velora/server/internal/library"
 	"github.com/ShouryaTyagi042/Velora/server/internal/postgres"
-	"github.com/ShouryaTyagi042/Velora/server/internal/scanner"
 	"github.com/ShouryaTyagi042/Velora/server/migrations"
 )
 
@@ -33,6 +34,11 @@ func main() {
 }
 
 func run() error {
+	// ctx is cancelled on Ctrl+C (SIGINT) or SIGTERM. Set up first, so a stop during the startup
+	// scan (seconds, on a big library) is a clean stop too.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	addr := os.Getenv("VELORA_ADDR")
 	if addr == "" {
 		addr = ":8080"
@@ -95,34 +101,41 @@ func run() error {
 	}
 	log.Printf("cache: %s", cacheDir)
 
-	repo := postgres.NewMediaRepo(db)
-	lib := &library{fsys: root.FS(), store: repo}
-	if _, _, err := lib.Rescan(context.Background()); err != nil {
-		return fmt.Errorf("initial scan of %s: %w", mediaDir, err)
+	workers, err := workerCount()
+	if err != nil {
+		return err
 	}
 
+	// Background work: scans (one at a time) and metadata extraction (workers at a time). Both
+	// run under jobsCtx, which shutdown cancels; runner and extracting are what it waits for.
+	jobsCtx, stopJobs := context.WithCancel(ctx)
+	defer stopJobs()
+	registry := jobs.NewRegistry()
+	runner := jobs.NewRunner(jobsCtx, registry)
+	repo := postgres.NewMediaRepo(db)
+	ext := extractor.New(repo, mediaDir, thumbDir, workers, registry)
+	lib := &library.Library{FS: root.FS(), Store: repo, Jobs: runner, Scanned: ext.Wake}
+
+	if _, err := lib.Rescan(ctx); err != nil {
+		return fmt.Errorf("initial scan of %s: %w", mediaDir, err)
+	}
+	var extracting sync.WaitGroup
+	extracting.Go(func() { ext.Run(jobsCtx) })
+	// However run returns, background work is stopped and waited for before the deferred
+	// db.Close: no job is left writing to a closed database, no ffmpeg outlives the server.
+	defer func() {
+		stopJobs()
+		runner.Wait()
+		extracting.Wait()
+	}()
+
 	srv := &http.Server{
-		Handler: api.CORS(corsOrigins(), api.NewHandler(repo, lib, root.FS(), os.DirFS(thumbDir), authn)),
+		Handler: api.CORS(corsOrigins(), api.NewHandler(repo, serverJobs{lib, registry}, root.FS(), os.DirFS(thumbDir), authn)),
 		// A client that connects and sends nothing would otherwise hold a goroutine forever.
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		// No WriteTimeout: phase 4 streams videos that take far longer than any fixed limit.
 	}
-
-	// ctx is cancelled on Ctrl+C (SIGINT) or SIGTERM.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	// The extractor fills in metadata and thumbnails in the background, one video at a time.
-	// It stops with ctx, or when run returns for any other reason; main waits for it, so no
-	// ffmpeg is left running after exit.
-	jobsCtx, stopJobs := context.WithCancel(ctx)
-	var jobs sync.WaitGroup
-	jobs.Go(func() { extractor.New(repo, mediaDir, thumbDir).Run(jobsCtx) })
-	defer func() {
-		stopJobs()
-		jobs.Wait()
-	}()
 
 	// Bind first, so "address already in use" is reported before we claim to be listening.
 	ln, err := net.Listen("tcp", addr)
@@ -141,8 +154,14 @@ func run() error {
 	}
 	stop() // a second Ctrl+C now kills the process immediately
 
-	// Shutdown stops accepting connections and waits for in-flight requests.
-	// Serve returns as soon as Shutdown starts, so main must wait here, not there.
+	// The order matters, and each step waits for the one before:
+	//  1. ctx is already cancelled, so jobsCtx is too: extraction and any scan are stopping now,
+	//     in parallel with step 2 (ffmpeg is killed through exec.CommandContext; a scan's
+	//     transaction rolls back; neither records a failure for a cancel).
+	//  2. Shutdown stops accepting connections and waits for in-flight requests. Serve returns
+	//     as soon as Shutdown starts, so main must wait here, not there.
+	//  3. Wait for the background work to return (below, then the deferred wait is a no-op).
+	//  4. The deferred db.Close runs last: nothing is using the pool any more.
 	log.Print("shutting down; waiting up to 10s for in-flight requests")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -152,8 +171,35 @@ func run() error {
 	if err := <-serveErr; !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
-	log.Print("shut down cleanly")
+	log.Print("requests drained; waiting for background jobs")
+	stopJobs()
+	runner.Wait()
+	extracting.Wait()
+	log.Print("jobs drained; shut down cleanly")
 	return nil
+}
+
+// serverJobs is the API's view of background work: scans from the library, status from the
+// registry. It satisfies api.Jobs.
+type serverJobs struct {
+	*library.Library
+	*jobs.Registry
+}
+
+// workerCount is VELORA_WORKERS, or half the CPUs: how many videos are extracted at once.
+// Half, from measurement (ADR 010): 40 videos on an 8-core M1 took 28.8 s with 1 worker, 21.1 s
+// with 2, 18.4 s with 4, and 20.4 s with 8. One ffmpeg thumbnail already decodes on ~5 cores, so
+// beyond 4 the workers only fight over the same cores, and the API and Postgres lose theirs.
+func workerCount() (int, error) {
+	s := os.Getenv("VELORA_WORKERS")
+	if s == "" {
+		return max(1, runtime.NumCPU()/2), nil
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 1 || n > 64 {
+		return 0, fmt.Errorf("VELORA_WORKERS=%q: want a whole number from 1 to 64", s)
+	}
+	return n, nil
 }
 
 // cacheDir is VELORA_CACHE_DIR, or the OS's cache folder (~/Library/Caches/velora on a Mac).
@@ -181,34 +227,4 @@ func corsOrigins() []string {
 		log.Printf("CORS: browser pages at %s may call the API", strings.Join(origins, ", "))
 	}
 	return origins
-}
-
-// library connects the scanner to the store. It satisfies api.Rescanner.
-type library struct {
-	fsys  fs.FS
-	store media.Syncer
-	mu    sync.Mutex // one scan at a time; a second POST /api/scan waits for the first
-}
-
-// Rescan walks the library and makes the store match what it found, in one transaction.
-func (l *library) Rescan(ctx context.Context) (int, []string, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	start := time.Now()
-	res, err := scanner.Scan(ctx, l.fsys)
-	if err != nil {
-		return 0, nil, err
-	}
-	sync, err := l.store.Sync(ctx, res.Items, start)
-	if err != nil {
-		return 0, nil, fmt.Errorf("save scan: %w", err)
-	}
-
-	log.Printf("scan: %d upserted, %d newly missing, %d warnings in %s",
-		sync.Upserted, sync.Missing, len(res.Warnings), time.Since(start).Round(time.Millisecond))
-	for _, w := range res.Warnings {
-		log.Printf("scan warning: %s", w)
-	}
-	return len(res.Items), res.Warnings, nil
 }

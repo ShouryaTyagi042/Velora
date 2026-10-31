@@ -136,20 +136,21 @@ func TestExtractorQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Four videos pending; the comic never is.
-	seen := map[string]bool{}
-	for range 10 {
-		m, ok, err := repo.NextPending(ctx)
-		if err != nil {
-			t.Fatal(err)
+	// Four videos pending; the comic never is. A limit is respected.
+	if two, err := repo.Pending(ctx, 2); err != nil || len(two) != 2 {
+		t.Fatalf("Pending(2) = %d videos, %v", len(two), err)
+	}
+	pending, err := repo.Pending(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 4 {
+		t.Fatalf("Pending = %d videos, want 4", len(pending))
+	}
+	for _, m := range pending {
+		if m.Kind != media.KindVideo || m.RelPath == "" {
+			t.Fatalf("Pending returned %+v", m)
 		}
-		if !ok {
-			break
-		}
-		if m.Kind != media.KindVideo || seen[m.ID] {
-			t.Fatalf("NextPending = %s %s (seen: %v)", m.Kind, m.Title, seen[m.ID])
-		}
-		seen[m.ID] = true
 		if m.Title == "Loose Clip" { // fails every time
 			for range extractor.MaxAttempts {
 				if err := repo.RecordFailure(ctx, m.ID, "moov atom not found"); err != nil {
@@ -162,8 +163,9 @@ func TestExtractorQueue(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if len(seen) != 4 {
-		t.Errorf("extracted %d videos, want 4", len(seen))
+	// Extracted ones and ones that failed MaxAttempts times are no longer pending.
+	if left, err := repo.Pending(ctx, 100); err != nil || len(left) != 0 {
+		t.Errorf("Pending after extraction = %d videos, %v; want none", len(left), err)
 	}
 
 	got, err := repo.List(ctx, 0, media.ListFilter{Kind: media.KindVideo})

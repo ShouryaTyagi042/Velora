@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/ShouryaTyagi042/Velora/server/internal/jobs"
 	"github.com/ShouryaTyagi042/Velora/server/internal/media"
 	"github.com/ShouryaTyagi042/Velora/server/internal/memstore"
 )
@@ -33,21 +35,32 @@ func newTestHandler() http.Handler {
 			Actors: []media.ActorTag{{Name: "Matthew McConaughey", Source: media.ActorFromFolder}}},
 		{ID: "c1", Title: "Watchmen", Kind: media.KindComic, RelPath: "comics/secret-dir/Watchmen",
 			Comic: &media.ComicMeta{PageCount: 2, Pages: []string{"secret-page-1.png", "secret-page-2.png"}}},
-	}), fakeRescanner{found: 3, warnings: nil}, fstest.MapFS{}, fstest.MapFS{
+	}), newFakeJobs(nil, nil), fstest.MapFS{}, fstest.MapFS{
 		"v2.jpg": {Data: []byte("\xff\xd8 a jpeg")}, // Interstellar has a thumbnail; The Matrix is pending
 	})
 }
 
-// fakeRescanner stands in for the real scanner + store.
-type fakeRescanner struct {
-	found    int
-	warnings []string
-	err      error
+// fakeJobs stands in for the real library: a real registry and runner, and a scan that returns
+// result or err. Wait waits for the scans it started.
+type fakeJobs struct {
+	*jobs.Registry
+	runner *jobs.Runner
+	result any
+	err    error
 }
 
-func (f fakeRescanner) Rescan(ctx context.Context) (int, []string, error) {
-	return f.found, f.warnings, f.err
+func newFakeJobs(result any, err error) *fakeJobs {
+	reg := jobs.NewRegistry()
+	return &fakeJobs{Registry: reg, runner: jobs.NewRunner(context.Background(), reg), result: result, err: err}
 }
+
+func (f *fakeJobs) StartScan() jobs.Job {
+	t := f.runner.Go("scan", func(ctx context.Context, t *jobs.Task) (any, error) { return f.result, f.err })
+	j, _ := f.Get(t.ID())
+	return j
+}
+
+func (f *fakeJobs) Wait() { f.runner.Wait() }
 
 func TestEndpoints(t *testing.T) {
 	tests := []struct {
@@ -173,18 +186,48 @@ func TestMediaJSONShape(t *testing.T) {
 	}
 }
 
-func TestScanEndpoint(t *testing.T) {
+// scanAndWait starts a scan through h, waits for it, and returns the job as GET /api/jobs/{id} reports it.
+func scanAndWait(t *testing.T, h http.Handler, js *fakeJobs) jobs.Job {
+	t.Helper()
 	rec := httptest.NewRecorder()
-	newTestHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/scan", nil))
-	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"found":3,"warnings":[]}` {
-		t.Errorf("got %d %s", rec.Code, rec.Body)
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/scan", nil))
+	var started jobs.Job
+	if err := json.Unmarshal(rec.Body.Bytes(), &started); err != nil || rec.Code != http.StatusAccepted || started.ID == "" {
+		t.Fatalf("POST /api/scan: %d %s, want 202 and a job", rec.Code, rec.Body)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/api/jobs/"+started.ID {
+		t.Errorf("Location = %q", loc)
+	}
+	js.Wait()
+	rec = get(t, h, "/api/jobs/"+started.ID)
+	var j jobs.Job
+	if err := json.Unmarshal(rec.Body.Bytes(), &j); err != nil || rec.Code != 200 {
+		t.Fatalf("GET /api/jobs/%s: %d %s", started.ID, rec.Code, rec.Body)
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Error("a job's status must not be cached: the phone polls it")
+	}
+	return j
+}
+
+func TestScanEndpoint(t *testing.T) {
+	js := newFakeJobs(map[string]int{"found": 3}, nil)
+	h := signedInHandler(memstore.New(nil), js, fstest.MapFS{}, fstest.MapFS{})
+	if j := scanAndWait(t, h, js); j.Status != jobs.Done || fmt.Sprint(j.Result) != "map[found:3]" {
+		t.Errorf("scan job = %+v", j)
+	}
+	if rec := get(t, h, "/api/jobs"); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"name":"scan"`) {
+		t.Errorf("GET /api/jobs: %d %s", rec.Code, rec.Body)
+	}
+	if rec := get(t, h, "/api/jobs/j_nope"); rec.Code != 404 {
+		t.Errorf("unknown job: %d, want 404", rec.Code)
 	}
 
-	rec = httptest.NewRecorder()
-	signedInHandler(failingRepo{}, fakeRescanner{err: errors.New("open /Users/x/media: permission denied")}, fstest.MapFS{}, fstest.MapFS{}).
-		ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/scan", nil))
-	if rec.Code != 500 || strings.Contains(rec.Body.String(), "/Users/") {
-		t.Errorf("scan failure: got %d %s, want a 500 that hides the path", rec.Code, rec.Body)
+	// A failed scan says so, without the error's details: they name paths.
+	js = newFakeJobs(nil, errors.New("open /Users/x/media: permission denied"))
+	h = signedInHandler(memstore.New(nil), js, fstest.MapFS{}, fstest.MapFS{})
+	if j := scanAndWait(t, h, js); j.Status != jobs.Failed || strings.Contains(j.Error, "/Users/") {
+		t.Errorf("failed scan job = %+v, want failed and no path", j)
 	}
 }
 
@@ -202,7 +245,7 @@ func (failingRepo) Get(ctx context.Context, user int64, id string) (media.Media,
 
 func TestInternalErrorsAreNotLeaked(t *testing.T) {
 	rec := httptest.NewRecorder()
-	signedInHandler(failingRepo{}, fakeRescanner{}, fstest.MapFS{}, fstest.MapFS{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/media", nil))
+	signedInHandler(failingRepo{}, newFakeJobs(nil, nil), fstest.MapFS{}, fstest.MapFS{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/media", nil))
 
 	if rec.Code != 500 {
 		t.Fatalf("status = %d, want 500", rec.Code)

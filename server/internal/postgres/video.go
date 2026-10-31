@@ -12,26 +12,32 @@ import (
 // video_metadata row, or one that was never extracted and has failed fewer than MaxAttempts
 // times. These methods implement extractor.Store on MediaRepo.
 
-// NextPending implements extractor.Store. Oldest first, so a fresh library fills in in the
-// order it was added.
-func (r *MediaRepo) NextPending(ctx context.Context) (media.Media, bool, error) {
-	var id int64
-	err := r.db.QueryRowContext(ctx, `
-		select m.id
+// Pending implements extractor.Store. Oldest first, so a fresh library fills in in the order it
+// was added. Only what extraction needs is read: id, title, path.
+func (r *MediaRepo) Pending(ctx context.Context, limit int) ([]media.Media, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		select m.id, m.title, m.rel_path
 		from media m
 		left join video_metadata vm on vm.media_id = m.id
 		where m.kind = 'video' and m.missing_since is null
 		  and (vm.media_id is null or (vm.extracted_at is null and vm.attempts < $1))
 		order by m.added_at, m.id
-		limit 1`, extractor.MaxAttempts).Scan(&id)
+		limit $2`, extractor.MaxAttempts, limit)
 	if err != nil {
-		if isNoRows(err) {
-			return media.Media{}, false, nil
-		}
-		return media.Media{}, false, err
+		return nil, err
 	}
-	m, err := r.get(ctx, r.db, 0, formatID(id)) // the extractor is nobody: no progress needed
-	return m, err == nil, err
+	defer rows.Close()
+	var out []media.Media
+	for rows.Next() {
+		var id int64
+		m := media.Media{Kind: media.KindVideo}
+		if err := rows.Scan(&id, &m.Title, &m.RelPath); err != nil {
+			return nil, err
+		}
+		m.ID = formatID(id)
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
 
 // SetVideoMeta implements extractor.Store.
