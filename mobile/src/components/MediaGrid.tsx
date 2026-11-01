@@ -1,8 +1,8 @@
-import { router } from "expo-router";
 import { ActivityIndicator, FlatList, StyleSheet, View } from "react-native";
 
 import type { Media } from "@/api/media";
 import type { Async } from "@/hooks/useAsync";
+import { openMedia } from "@/navigation/openMedia";
 import { space } from "@/theme";
 import { Button } from "./Button";
 import { EmptyView } from "./EmptyView";
@@ -10,7 +10,6 @@ import { ErrorView } from "./ErrorView";
 import { MediaCard } from "./MediaCard";
 import { Skeleton } from "./Skeleton";
 
-const openMedia = (m: Media) => router.push({ pathname: "/media/[id]", params: { id: m.id } });
 
 type Props = {
   state: Async<Media[]>;

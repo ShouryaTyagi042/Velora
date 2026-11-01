@@ -70,3 +70,58 @@ func (r *MediaRepo) RecordFailure(ctx context.Context, id string, reason string)
 		n, reason)
 	return err
 }
+
+// PendingPreviews implements extractor.Store: videos with metadata whose preview is missing, or
+// was made from an older version of the file (preview_for isn't the file's mod_time), and hasn't
+// failed MaxAttempts times. Oldest first, like Pending.
+func (r *MediaRepo) PendingPreviews(ctx context.Context, limit int) ([]media.Media, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		select m.id, m.title, m.rel_path, m.mod_time, vm.duration_ms
+		from media m
+		join video_metadata vm on vm.media_id = m.id
+		where m.kind = 'video' and m.missing_since is null
+		  and vm.extracted_at is not null and vm.duration_ms > 0
+		  and vm.preview_for is distinct from m.mod_time and vm.preview_attempts < $1
+		order by m.added_at, m.id
+		limit $2`, extractor.MaxAttempts, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []media.Media
+	for rows.Next() {
+		var id int64
+		m := media.Media{Kind: media.KindVideo, Video: &media.VideoMeta{}}
+		if err := rows.Scan(&id, &m.Title, &m.RelPath, &m.ModTime, &m.Video.DurationMs); err != nil {
+			return nil, err
+		}
+		m.ID = formatID(id)
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// SetPreview implements extractor.Store. The attempts start again from 0: if the file changes
+// later, its new preview gets the full number of tries.
+func (r *MediaRepo) SetPreview(ctx context.Context, id string, modTime time.Time) error {
+	n, ok := parseID(id)
+	if !ok {
+		return media.ErrNotFound
+	}
+	_, err := r.db.ExecContext(ctx, `
+		update video_metadata set preview_for = $2, preview_attempts = 0, preview_error = null
+		where media_id = $1`, n, modTime)
+	return err
+}
+
+// RecordPreviewFailure implements extractor.Store.
+func (r *MediaRepo) RecordPreviewFailure(ctx context.Context, id string, reason string) error {
+	n, ok := parseID(id)
+	if !ok {
+		return media.ErrNotFound
+	}
+	_, err := r.db.ExecContext(ctx, `
+		update video_metadata set preview_attempts = preview_attempts + 1, preview_error = $2
+		where media_id = $1`, n, reason)
+	return err
+}

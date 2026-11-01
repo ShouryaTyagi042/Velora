@@ -5,6 +5,7 @@ import { Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native
 import { ApiError } from "@/api/client";
 import { addActor, getMedia, MediaKind, removeActor, type Media } from "@/api/media";
 import { ActorChip } from "@/components/ActorChip";
+import { Chip } from "@/components/Chip";
 import { Button } from "@/components/Button";
 import { ErrorView } from "@/components/ErrorView";
 import { Icon } from "@/components/Icon";
@@ -78,6 +79,21 @@ function MediaDetails({ media: initial }: { media: Media }) {
 
       <Button label={action} onPress={open} haptic />
 
+      {media.series && (
+        <View style={styles.section}>
+          <Text variant="title" accessibilityRole="header">
+            Series
+          </Text>
+          <View style={styles.actors}>
+            <Chip
+              label={media.series}
+              accessibilityLabel={`${media.series}, show every episode`}
+              onPress={() => router.push({ pathname: "/anime", params: { series: media.series } })}
+            />
+          </View>
+        </View>
+      )}
+
       {isVideo && (
         <View style={styles.section}>
           <Text variant="title" accessibilityRole="header">
@@ -89,6 +105,7 @@ function MediaDetails({ media: initial }: { media: Media }) {
                 <ActorChip
                   key={tag.name}
                   tag={tag}
+                  section={media.section}
                   onRemove={() =>
                     removeActor(media.id, tag.name).then(
                       () => setMedia((m) => ({ ...m, actors: m.actors?.filter((a) => a.name !== tag.name) })),

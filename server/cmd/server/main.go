@@ -45,7 +45,7 @@ func run() error {
 	}
 	mediaDir := os.Getenv("VELORA_MEDIA_DIR")
 	if mediaDir == "" {
-		return errors.New("VELORA_MEDIA_DIR is not set: point it at the folder holding movies/ and comics/")
+		return errors.New("VELORA_MEDIA_DIR is not set: point it at the folder holding movies/, anime/ and comics/")
 	}
 	if info, err := os.Stat(mediaDir); err != nil {
 		return err
@@ -96,8 +96,11 @@ func run() error {
 		return err
 	}
 	thumbDir := filepath.Join(cacheDir, "thumbs")
-	if err := os.MkdirAll(thumbDir, 0o755); err != nil {
-		return err
+	previewDir := filepath.Join(cacheDir, "previews")
+	for _, dir := range []string{thumbDir, previewDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
 	}
 	log.Printf("cache: %s", cacheDir)
 
@@ -113,7 +116,7 @@ func run() error {
 	registry := jobs.NewRegistry()
 	runner := jobs.NewRunner(jobsCtx, registry)
 	repo := postgres.NewMediaRepo(db)
-	ext := extractor.New(repo, mediaDir, thumbDir, workers, registry)
+	ext := extractor.New(repo, mediaDir, thumbDir, previewDir, workers, registry)
 	lib := &library.Library{FS: root.FS(), Store: repo, Jobs: runner, Scanned: ext.Wake}
 
 	if _, err := lib.Rescan(ctx); err != nil {
@@ -130,7 +133,7 @@ func run() error {
 	}()
 
 	srv := &http.Server{
-		Handler: api.CORS(corsOrigins(), api.NewHandler(repo, serverJobs{lib, registry}, root.FS(), os.DirFS(thumbDir), authn)),
+		Handler: api.CORS(corsOrigins(), api.NewHandler(repo, serverJobs{lib, registry}, root.FS(), os.DirFS(thumbDir), os.DirFS(previewDir), authn)),
 		// A client that connects and sends nothing would otherwise hold a goroutine forever.
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,

@@ -2,7 +2,7 @@ import { router, useFocusEffect } from "expo-router";
 import { useCallback } from "react";
 import { FlatList, ScrollView, StyleSheet, View } from "react-native";
 
-import { listMedia, MediaKind, type Media } from "@/api/media";
+import { listMedia, MediaKind, Section, type Media } from "@/api/media";
 import { getContinue } from "@/api/progress";
 import { EmptyView } from "@/components/EmptyView";
 import { ErrorView } from "@/components/ErrorView";
@@ -10,6 +10,7 @@ import { MediaCard } from "@/components/MediaCard";
 import { Skeleton } from "@/components/Skeleton";
 import { Text } from "@/components/Text";
 import { useAsync } from "@/hooks/useAsync";
+import { openMedia } from "@/navigation/openMedia";
 import { space } from "@/theme";
 
 const RECENT_COUNT = 10;
@@ -21,11 +22,16 @@ const COVER_WIDTH = 110; // a 2:3 comic cover is tall, so it gets a narrower car
 // Each row asks the server for exactly what it shows: the newest few of one kind, by when Velora
 // first saw them. (Before phase 12 Home fetched the whole library and sorted it here.)
 const fetchHome = async (signal: AbortSignal) => {
-  const recent = (kind: MediaKind) => listMedia({ kind, sort: "recent", limit: RECENT_COUNT, signal });
-  const [videos, comics, cont] = await Promise.all([recent(MediaKind.Video), recent(MediaKind.Comic), getContinue({ signal })]);
-  return { videos: videos.items, comics: comics.items, ...cont };
+  const recent = (kind: MediaKind, section?: Section) =>
+    listMedia({ kind, section, sort: "recent", limit: RECENT_COUNT, signal });
+  const [videos, anime, comics, cont] = await Promise.all([
+    recent(MediaKind.Video, Section.Movies),
+    recent(MediaKind.Video, Section.Anime),
+    recent(MediaKind.Comic),
+    getContinue({ signal }),
+  ]);
+  return { videos: videos.items, anime: anime.items, comics: comics.items, ...cont };
 };
-const openMedia = (m: Media) => router.push({ pathname: "/media/[id]", params: { id: m.id } });
 const resume = (m: Media) =>
   router.push({ pathname: m.kind === MediaKind.Video ? "/player/[id]" : "/reader/[id]", params: { id: m.id } });
 // Each row holds one kind, so the cards don't need a VIDEO / COMIC badge.
@@ -49,10 +55,10 @@ export default function Home() {
     <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.content}>
       {state.status === "loading" ? (
         <HomeSkeleton />
-      ) : state.data.videos.length === 0 && state.data.comics.length === 0 ? (
+      ) : state.data.videos.length === 0 && state.data.anime.length === 0 && state.data.comics.length === 0 ? (
         <EmptyView
           title="Your library is empty"
-          detail="Put videos in movies/ and comics in comics/ inside the folder velora-server serves, then open Videos or Comics and pull down to rescan."
+          detail="Put videos in movies/, anime in anime/ and comics in comics/ inside the folder velora-server serves, then open Videos or Comics and pull down to rescan."
           action={{ label: "Open Videos", onPress: () => router.push("/videos") }}
         />
       ) : (
@@ -60,6 +66,7 @@ export default function Home() {
           <Row title="Continue watching" items={state.data.watching} render={renderResume} />
           <Row title="Continue reading" items={state.data.reading} render={renderResume} />
           <Row title="New videos" items={state.data.videos} render={renderCard} />
+          <Row title="New anime" items={state.data.anime} render={renderCard} />
           <Row title="New comics" items={state.data.comics} render={renderCard} />
         </>
       )}

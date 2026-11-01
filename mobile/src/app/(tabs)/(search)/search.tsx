@@ -1,4 +1,4 @@
-import { router, Stack } from "expo-router";
+import { Stack } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, FlatList, StyleSheet, View } from "react-native";
 
@@ -8,10 +8,10 @@ import { ErrorView } from "@/components/ErrorView";
 import { Loading } from "@/components/Loading";
 import { MediaCard } from "@/components/MediaCard";
 import { usePages } from "@/hooks/usePages";
+import { openMedia } from "@/navigation/openMedia";
 import { space } from "@/theme";
 
 const nothing: Page<Media> = { items: [], nextCursor: null };
-const openMedia = (m: Media) => router.push({ pathname: "/media/[id]", params: { id: m.id } });
 const renderCard = ({ item }: { item: Media }) => (
   <View style={styles.cell}>
     <MediaCard media={item} onPress={openMedia} />
@@ -23,7 +23,7 @@ const renderCard = ({ item }: { item: Media }) => (
 const SEARCH_DELAY = 300;
 
 // Search: the native search field (in the glass tab bar on iOS 26, in the header elsewhere).
-// The server matches titles and actors' names, ignoring case and accents. It used to happen here,
+// The server matches titles, actors' names and anime series, ignoring case and accents. It used to happen here,
 // over the whole library downloaded up front; at 100k items that download was 33 MB (phase 12).
 export default function Search() {
   const [query, setQuery] = useState("");
@@ -43,7 +43,7 @@ export default function Search() {
     <Stack.Screen
       options={{
         headerSearchBarOptions: {
-          placeholder: "Titles and actors",
+          placeholder: "Titles, actors and series",
           onChangeText: (e) => setQuery(e.nativeEvent.text),
           autoCapitalize: "none",
         },

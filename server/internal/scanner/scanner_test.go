@@ -70,6 +70,34 @@ func TestScanFindsExactlyTheLibrary(t *testing.T) {
 	}
 }
 
+func TestScanAnime(t *testing.T) {
+	res, err := Scan(context.Background(), fstest.MapFS{
+		"anime/Cowboy Bebop/Session 1.mkv": {},
+		"anime/Loose Episode.mp4":          {},
+		"movies/The Matrix.mp4":            {},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Warnings) != 0 {
+		t.Errorf("warnings = %v, want none", res.Warnings)
+	}
+	got := map[string]media.Media{}
+	for _, m := range res.Items {
+		got[m.Title] = m
+	}
+	if m := got["Session 1"]; m.Kind != media.KindVideo || m.Section != media.SectionAnime ||
+		m.Series != "Cowboy Bebop" || len(m.Actors) != 0 {
+		t.Errorf("Session 1 = %+v, want an anime video of series Cowboy Bebop with no actors", m)
+	}
+	if m := got["Loose Episode"]; m.Section != media.SectionAnime || m.Series != "" || len(m.Actors) != 0 {
+		t.Errorf("Loose Episode = %+v, want anime, no series, no actors", m)
+	}
+	if m := got["The Matrix"]; m.Section != media.SectionMovies {
+		t.Errorf("The Matrix section = %q, want movies", m.Section)
+	}
+}
+
 func TestScanVideos(t *testing.T) {
 	_, byTitle := scanTestLibrary(t)
 
@@ -138,8 +166,8 @@ func TestScanWarnings(t *testing.T) {
 	all := strings.Join(res.Warnings, "\n")
 
 	for _, want := range []string{
-		"notes.txt: not under movies/ or comics/",
-		"Movies: not under movies/ or comics/",
+		"notes.txt: not under movies/, anime/ or comics/",
+		"Movies: not under movies/, anime/ or comics/",
 		"comics/Empty Folder: no images, skipped",
 		"comics/Sample Comic/extras: subfolder inside a comic",
 	} {
@@ -203,6 +231,7 @@ func TestFolderActor(t *testing.T) {
 		"movies/A/extras/x.mp4":     "A",
 		"movies/x.mp4":              "",
 		"movies/Keanu Reeves/x.mp4": "Keanu Reeves",
+		"anime/Cowboy Bebop/x.mkv":  "", // a series, not an actor
 	}
 	for p, want := range tests {
 		if got := folderActor(p); got != want {

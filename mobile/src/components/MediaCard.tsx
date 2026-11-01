@@ -1,7 +1,10 @@
+import * as Haptics from "expo-haptics";
 import { Pressable, StyleSheet, View, type ViewStyle } from "react-native";
 
-import { MediaKind, type Media, type Progress } from "@/api/media";
+import { MediaKind, Section, type Media, type Progress } from "@/api/media";
 import { formatDuration } from "@/lib/format";
+import { PreviewVideo } from "@/preview/PreviewVideo";
+import { startPreview, useIsPreviewing } from "@/preview/store";
 import { onMedia, radius, space, useAppTheme } from "@/theme";
 import { Poster } from "./Poster";
 import { Text } from "./Text";
@@ -13,21 +16,34 @@ type Props = { media: Media; onPress: (media: Media) => void; style?: ViewStyle;
 // MediaCard is a poster and a title. A video's poster shows its duration once it's known, and
 // anything started shows a thin progress bar along the poster's bottom edge. One accessible
 // element: a screen reader reads "The Matrix, video, 2 hours 16 minutes, 40% watched".
+// Long-pressing a video with a preview plays it over the poster (phase 14): once, muted, until it
+// ends, another card is long-pressed, or the screen loses focus. Nothing happens on release.
 export function MediaCard({ media, onPress, style, showKind = true }: Props) {
   const { colors } = useAppTheme();
   const isVideo = media.kind === MediaKind.Video;
+  const canPreview = isVideo && media.video?.preview === true;
+  const previewing = useIsPreviewing(media.id);
   const done = media.progress && !media.progress.completed ? fraction(media.progress) : null;
+  const preview = () => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); // the press was felt: it's intentional
+    startPreview(media);
+  };
   return (
     <Pressable
       onPress={() => onPress(media)}
+      onLongPress={canPreview ? preview : undefined}
+      delayLongPress={PREVIEW_DELAY}
       accessibilityRole="button"
       accessibilityLabel={describe(media, done)}
+      accessibilityActions={canPreview ? [{ name: "longpress", label: "Preview" }] : undefined}
+      onAccessibilityAction={(e) => e.nativeEvent.actionName === "longpress" && canPreview && preview()}
       style={({ pressed }) => [styles.card, style, pressed && styles.pressed]}
     >
       <Poster media={media}>
+        {previewing && <PreviewVideo id={media.id} />}
         {showKind && (
           <Text variant="caption" color={onMedia.text} style={[styles.badge, styles.kind]}>
-            {isVideo ? "VIDEO" : "COMIC"}
+            {isVideo ? (media.section === Section.Anime ? "ANIME" : "VIDEO") : "COMIC"}
           </Text>
         )}
         {media.video && (
@@ -48,6 +64,10 @@ export function MediaCard({ media, onPress, style, showKind = true }: Props) {
   );
 }
 
+// PREVIEW_DELAY is how long a press must last to start a preview, in ms: past a tap, short of
+// feeling like a wait.
+const PREVIEW_DELAY = 350;
+
 // fraction is how far through an item its progress is, 0 to 1.
 function fraction(p: Progress): number {
   if (p.durationMs) return Math.min(1, (p.positionMs ?? 0) / p.durationMs);
@@ -56,7 +76,7 @@ function fraction(p: Progress): number {
 }
 
 function describe(m: Media, done: number | null): string {
-  const parts = [m.title, m.kind === MediaKind.Video ? "video" : "comic"];
+  const parts = [m.title, m.kind === MediaKind.Video ? (m.section === Section.Anime ? "anime" : "video") : "comic"];
   if (m.video) parts.push(formatDuration(m.video.durationMs / 1000));
   if (done !== null) parts.push(`${Math.round(done * 100)}% ${m.kind === MediaKind.Video ? "watched" : "read"}`);
   return parts.join(", ");

@@ -8,6 +8,13 @@ export enum MediaKind {
   Comic = "comic",
 }
 
+// Section is the shelf a video sits on: the top-level folder it is in on the server (movies/ or
+// anime/). Anime is still a video; only the tab differs. Comics have none.
+export enum Section {
+  Movies = "movies",
+  Anime = "anime",
+}
+
 export enum ActorSource {
   Folder = "folder", // from movies/<actor>/; changes only by renaming the folder
   Manual = "manual", // added in the app; removable there, and kept by rescans
@@ -25,6 +32,7 @@ export type VideoMeta = {
   height: number;
   codec: string;
   fps: number;
+  preview?: boolean; // a long-press preview of the file as it is now exists (phase 14)
 };
 
 // Where you are in an item, as the server stored it. Absent fields are 0.
@@ -41,6 +49,8 @@ export type Media = {
   id: string;
   title: string;
   kind: MediaKind;
+  section?: Section; // videos only
+  series?: string; // anime in a series folder only (anime/<series>/…); a show, not an actor
   mimeType?: string; // videos only; a comic is a folder
   sizeBytes: number;
   modTime: string; // RFC 3339 timestamp
@@ -53,9 +63,11 @@ export type Media = {
 
 export type ListOptions = {
   kind?: MediaKind;
+  section?: Section; // videos in this section only
+  series?: string; // episodes of this anime series only (exact name)
   actor?: string;
   q?: string; // search titles and actors, ignoring case and accents
-  sort?: "title" | "recent"; // title by default
+  sort?: "title" | "title_desc" | "recent"; // title (A to Z, natural: 2 before 10) by default
   limit?: number; // the server's default is 50, its maximum 200
   after?: string; // the previous page's nextCursor
   signal?: AbortSignal;
@@ -66,9 +78,12 @@ export type Page<T> = { items: T[]; nextCursor: string | null };
 
 // listMedia is one page of the library. The server never sends the whole thing: at 100k items that
 // was 33 MB for a screen showing a dozen cards (phase 12).
-export function listMedia({ kind, actor, q, sort, limit, after, signal }: ListOptions = {}): Promise<Page<Media>> {
+export function listMedia(options: ListOptions = {}): Promise<Page<Media>> {
+  const { kind, section, series, actor, q, sort, limit, after, signal } = options;
   const params = new URLSearchParams();
   if (kind) params.set("kind", kind);
+  if (section) params.set("section", section);
+  if (series) params.set("series", series);
   if (actor) params.set("actor", actor);
   if (q) params.set("q", q);
   if (sort) params.set("sort", sort);
@@ -96,9 +111,19 @@ export function removeActor(id: string, name: string): Promise<void> {
 
 export type ActorCount = { name: string; videoCount: number };
 
-// listActors is every actor with at least one available video, by name.
-export async function listActors({ signal }: { signal?: AbortSignal } = {}): Promise<ActorCount[]> {
-  const body = await getJSON<{ items: ActorCount[] }>("/api/actors", { signal });
+// listActors is every actor with at least one available video (in section, if given), by name.
+export async function listActors({ section, signal }: { section?: Section; signal?: AbortSignal } = {}): Promise<
+  ActorCount[]
+> {
+  const body = await getJSON<{ items: ActorCount[] }>(`/api/actors${section ? `?section=${section}` : ""}`, { signal });
+  return body.items;
+}
+
+export type SeriesCount = { name: string; episodeCount: number };
+
+// listSeries is every anime series with at least one available episode, in natural order.
+export async function listSeries({ signal }: { signal?: AbortSignal } = {}): Promise<SeriesCount[]> {
+  const body = await getJSON<{ items: SeriesCount[] }>("/api/series", { signal });
   return body.items;
 }
 
@@ -141,6 +166,13 @@ export function pageUrl(comic: Media, n: number): string {
 export function thumbnailUrl(m: Media): string | null {
   if (m.kind === MediaKind.Video && !m.video) return null;
   return `${baseUrl}/api/media/${encodeURIComponent(m.id)}/thumbnail?v=${encodeURIComponent(m.modTime)}`;
+}
+
+// previewUrl is a video's long-press preview: a short silent montage the server cut from it. Only
+// for a video with video.preview; anything else is a 404. Versioned by modTime like thumbnails, so
+// the phone keeps it and a replaced file gets a new URL.
+export function previewUrl(m: Media): string {
+  return `${baseUrl}/api/media/${encodeURIComponent(m.id)}/preview?v=${encodeURIComponent(m.modTime)}`;
 }
 
 // streamUrl is what the native player fetches: GET /api/media/{id}/stream with Range headers.

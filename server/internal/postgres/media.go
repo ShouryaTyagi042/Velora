@@ -43,10 +43,11 @@ type querier interface {
 // running the subquery only for those. The folder actor comes first (false sorts before true),
 // then manual ones by name; json_agg over no rows is null, hence the coalesce.
 const selectMedia = `
-select m.id, m.fingerprint, m.kind, m.title, m.rel_path, coalesce(m.mime_type, ''), m.size_bytes,
+select m.id, m.fingerprint, m.kind, m.title, m.rel_path, coalesce(m.series, ''), coalesce(m.mime_type, ''), m.size_bytes,
        m.mod_time, m.added_at, cm.page_count, cm.pages,
        vm.extracted_at is not null, coalesce(vm.duration_ms, 0), coalesce(vm.width, 0),
        coalesce(vm.height, 0), coalesce(vm.codec, ''), coalesce(vm.fps, 0)::float8,
+       coalesce(vm.preview_for = m.mod_time, false),
        coalesce(wp.updated_at, rp.updated_at), coalesce(wp.position_ms, 0), coalesce(wp.duration_ms, 0),
        coalesce(rp.page, 0), coalesce(rp.page_count, 0), coalesce(wp.completed, rp.completed, false),
        coalesce((select json_agg(json_build_object('name', a.name, 'source', ma.source)
@@ -77,6 +78,14 @@ func (r *MediaRepo) List(ctx context.Context, user int64, f media.ListFilter) ([
 	if f.Kind != "" {
 		q += ` and m.kind = ` + param(string(f.Kind))
 	}
+	if f.Section != "" {
+		// The section is the top-level folder (media.SectionOf), so it is read off rel_path rather
+		// than stored twice. Only videos have one.
+		q += ` and m.kind = 'video' and ` + sectionCond("m.rel_path", param)(f.Section)
+	}
+	if f.Series != "" {
+		q += ` and m.series = ` + param(f.Series) // media_series_title_idx
+	}
 	if f.Actor != "" {
 		// An exists, not a join: the subquery in selectMedia still sees every actor of the video.
 		q += ` and exists (select 1 from media_actors ma2 join actors a2 on a2.id = ma2.actor_id
@@ -86,6 +95,7 @@ func (r *MediaRepo) List(ctx context.Context, user int64, f media.ListFilter) ([
 		// like, with the user's % and _ escaped, so they match themselves.
 		p := param("%" + escapeLike(f.Query) + "%")
 		q += ` and (velora_fold(m.title) like velora_fold(` + p + `)
+		       or velora_fold(m.series) like velora_fold(` + p + `)
 		       or exists (select 1 from media_actors ma3 join actors a3 on a3.id = ma3.actor_id
 		                  where ma3.media_id = m.id and velora_fold(a3.name) like velora_fold(` + p + `)))`
 	}
@@ -97,16 +107,24 @@ func (r *MediaRepo) List(ctx context.Context, user int64, f media.ListFilter) ([
 		// The cursor row's own sort key, read from the database. Row comparison (a, b) > (c, d)
 		// means a > c, or a = c and b > d: exactly "after it" in a two-column order. An id that
 		// doesn't exist gives no row, the comparison is null, and the page is empty.
-		if f.Sort == media.SortRecent {
+		// Descending orders continue below the cursor (<), ascending ones above it (>).
+		switch f.Sort {
+		case media.SortRecent:
 			q += ` and (m.added_at, m.id) < (select added_at, id from media where id = ` + param(after) + `)`
-		} else {
-			q += ` and (lower(m.title), m.id) > (select lower(title), id from media where id = ` + param(after) + `)`
+		case media.SortTitleDesc:
+			q += ` and (` + titleKey("m.title") + `, m.id) < (select ` + titleKey("title") + `, id from media where id = ` + param(after) + `)`
+		default:
+			q += ` and (` + titleKey("m.title") + `, m.id) > (select ` + titleKey("title") + `, id from media where id = ` + param(after) + `)`
 		}
 	}
-	if f.Sort == media.SortRecent {
+	switch f.Sort {
+	case media.SortRecent:
 		q += ` order by m.added_at desc, m.id desc`
-	} else {
-		q += ` order by lower(m.title), m.id`
+	case media.SortTitleDesc:
+		// Both columns descending: Postgres reads media_kind_title_idx backwards, no sort step.
+		q += ` order by ` + titleKey("m.title") + ` desc, m.id desc`
+	default:
+		q += ` order by ` + titleKey("m.title") + `, m.id`
 	}
 	if f.Limit > 0 {
 		// A literal, not a parameter, for the reason in Continue: with "limit $n" Postgres re-plans
@@ -163,14 +181,15 @@ func (r *MediaRepo) scanMedia(row interface{ Scan(...any) error }) (media.Media,
 		p         media.Progress
 		actors    []byte
 	)
-	err := row.Scan(&id, &m.Fingerprint, &m.Kind, &m.Title, &m.RelPath, &m.MimeType, &m.SizeBytes,
+	err := row.Scan(&id, &m.Fingerprint, &m.Kind, &m.Title, &m.RelPath, &m.Series, &m.MimeType, &m.SizeBytes,
 		&m.ModTime, &m.AddedAt, &pageCount, r.types.SQLScanner(&pages),
-		&extracted, &v.DurationMs, &v.Width, &v.Height, &v.Codec, &v.FPS,
+		&extracted, &v.DurationMs, &v.Width, &v.Height, &v.Codec, &v.FPS, &v.Preview,
 		&saved, &p.PositionMs, &p.DurationMs, &p.Page, &p.PageCount, &p.Completed, &actors)
 	if err != nil {
 		return media.Media{}, err
 	}
 	m.ID = formatID(id)
+	m.Section = media.SectionOf(m.Kind, m.RelPath)
 	if pageCount.Valid {
 		m.Comic = &media.ComicMeta{PageCount: int(pageCount.Int32), Pages: pages}
 	}
@@ -221,14 +240,18 @@ func upsert(ctx context.Context, tx *sql.Tx, m media.Media, scannedAt time.Time)
 	// added_at is set on insert only; missing_since clears when a missing file comes back.
 	var id int64
 	err := tx.QueryRowContext(ctx, `
-		insert into media (fingerprint, kind, title, rel_path, mime_type, size_bytes, mod_time, last_seen_at)
-		values ($1, $2, $3, $4, nullif($5, ''), $6, $7, $8)
+		insert into media (fingerprint, kind, title, rel_path, series, mime_type, size_bytes, mod_time, last_seen_at)
+		values ($1, $2, $3, $4, nullif($9, ''), nullif($5, ''), $6, $7, $8)
 		on conflict (fingerprint) do update
-		  set title = excluded.title, rel_path = excluded.rel_path, mime_type = excluded.mime_type,
+		  set title = excluded.title, rel_path = excluded.rel_path, series = excluded.series,
+		      mime_type = excluded.mime_type,
 		      size_bytes = excluded.size_bytes, mod_time = excluded.mod_time,
 		      last_seen_at = excluded.last_seen_at, missing_since = null
 		returning id`,
 		m.Fingerprint, m.Kind, m.Title, m.RelPath, m.MimeType, m.SizeBytes, m.ModTime, scannedAt,
+		// From the path, by the one rule, not from m.Series: whatever built m, the column can't
+		// disagree with rel_path.
+		media.SeriesOf(m.Kind, m.RelPath),
 	).Scan(&id)
 	if err != nil {
 		return err
@@ -292,15 +315,21 @@ func upsertActor(ctx context.Context, q querier, name string) (int64, error) {
 
 // ListActors implements media.Repository: both sources count, only available videos.
 // The primary key allows one link per (video, actor), so count(*) counts distinct videos.
-func (r *MediaRepo) ListActors(ctx context.Context) ([]media.ActorCount, error) {
-	rows, err := r.db.QueryContext(ctx, `
+func (r *MediaRepo) ListActors(ctx context.Context, section media.Section) ([]media.ActorCount, error) {
+	q := `
 		select a.name, count(*)
 		from actors a
 		join media_actors ma on ma.actor_id = a.id
 		join media m         on m.id = ma.media_id
-		where m.kind = 'video' and m.missing_since is null
+		where m.kind = 'video' and m.missing_since is null`
+	var args []any
+	if section != "" {
+		q += ` and ` + sectionCond("m.rel_path", func(v any) string { args = append(args, v); return "$1" })(section)
+	}
+	q += `
 		group by a.id, a.name
-		order by a.name`)
+		order by a.name`
+	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -385,6 +414,45 @@ func (r *MediaRepo) RemoveActor(ctx context.Context, id, name string) error {
 			n, name)
 		return err
 	})
+}
+
+// ListSeries implements media.Repository: available episodes per series, in natural order.
+func (r *MediaRepo) ListSeries(ctx context.Context) ([]media.SeriesCount, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		select series, count(*)
+		from media
+		where series is not null and missing_since is null
+		group by series
+		order by velora_title_key(series) collate "C", series`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []media.SeriesCount{}
+	for rows.Next() {
+		var c media.SeriesCount
+		if err := rows.Scan(&c.Name, &c.EpisodeCount); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// titleKey is the natural sort key of a title column (velora_title_key, migration 0010), in byte
+// order. It must be written exactly like the media_kind_title_idx expression for the index to apply.
+func titleKey(col string) string { return `(velora_title_key(` + col + `) collate "C")` }
+
+// sectionCond returns a condition on col (a rel_path column) matching videos in a section, the
+// way media.SectionOf decides it: anime/… is anime, every other video is movies.
+func sectionCond(col string, param func(any) string) func(media.Section) string {
+	return func(s media.Section) string {
+		p := param(string(media.SectionAnime) + "/%")
+		if s == media.SectionAnime {
+			return col + ` like ` + p
+		}
+		return col + ` not like ` + p
+	}
 }
 
 func formatID(n int64) string { return strconv.FormatInt(n, 10) }

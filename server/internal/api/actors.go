@@ -16,14 +16,35 @@ type actorsResponse struct {
 	Items []media.ActorCount `json:"items"`
 }
 
-// listActors handles GET /api/actors: every actor with a count of their available videos.
+// listActors handles GET /api/actors?section=movies|anime: every actor with a count of their
+// available videos, in that section only when one is given.
 func listActors(repo media.Repository) HandlerE {
 	return func(w http.ResponseWriter, r *http.Request) error {
-		items, err := repo.ListActors(r.Context())
+		section, err := parseSection(r.URL.Query().Get("section"))
+		if err != nil {
+			return err
+		}
+		items, err := repo.ListActors(r.Context(), section)
 		if err != nil {
 			return err
 		}
 		respondJSON(w, http.StatusOK, actorsResponse{Items: items})
+		return nil
+	}
+}
+
+type seriesResponse struct {
+	Items []media.SeriesCount `json:"items"`
+}
+
+// listSeries handles GET /api/series: every anime series with a count of its available episodes.
+func listSeries(repo media.Repository) HandlerE {
+	return func(w http.ResponseWriter, r *http.Request) error {
+		items, err := repo.ListSeries(r.Context())
+		if err != nil {
+			return err
+		}
+		respondJSON(w, http.StatusOK, seriesResponse{Items: items})
 		return nil
 	}
 }

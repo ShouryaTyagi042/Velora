@@ -3,6 +3,7 @@ package media
 
 import (
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -17,6 +18,50 @@ const (
 // Valid reports whether k is a known kind.
 func (k Kind) Valid() bool {
 	return k == KindVideo || k == KindComic
+}
+
+// Section says which shelf a video sits on: the top-level folder it was found in. Anime is
+// still a video (streams, thumbnails, metadata and watch progress all work the same); only the
+// tab it shows in differs. Comics have no section.
+type Section string
+
+const (
+	SectionMovies Section = "movies"
+	SectionAnime  Section = "anime"
+)
+
+// Valid reports whether s is a known section.
+func (s Section) Valid() bool {
+	return s == SectionMovies || s == SectionAnime
+}
+
+// SectionOf returns the section of a video at relPath ("anime/…" or "movies/…"), or "" for a
+// comic. Both stores derive it from the path, so it needs no column of its own.
+func SectionOf(kind Kind, relPath string) Section {
+	if kind != KindVideo {
+		return ""
+	}
+	if strings.HasPrefix(relPath, string(SectionAnime)+"/") {
+		return SectionAnime
+	}
+	return SectionMovies
+}
+
+// SeriesOf returns the series of an anime episode at relPath: the folder right under anime/
+// ("anime/<series>/…/ep.mkv"), or "" for an episode directly in anime/ and for anything that
+// isn't anime. The scanner and the stores use this one rule; Postgres stores the result in
+// media.series (migration 0011), so it can be indexed. A series is not an actor:
+// movies/<actor>/ names a person, anime/<series>/ names a show, and keeping them apart keeps the
+// actor list, the actor filter and search about people.
+func SeriesOf(kind Kind, relPath string) string {
+	if SectionOf(kind, relPath) != SectionAnime {
+		return ""
+	}
+	segs := strings.Split(relPath, "/")
+	if len(segs) < 3 {
+		return ""
+	}
+	return segs[1]
 }
 
 // ActorSource says who owns an actor tag: the folder layout or a person using the app.
@@ -46,6 +91,9 @@ type VideoMeta struct {
 	Height     int     `json:"height"`
 	Codec      string  `json:"codec"`
 	FPS        float64 `json:"fps"`
+	// Preview is whether a long-press preview of the file as it is now exists (phase 14):
+	// GET /api/media/{id}/preview answers 200 exactly when this is true.
+	Preview bool `json:"preview,omitempty"`
 }
 
 // Progress is where you are in one item: a position for a video, a page for a comic.
@@ -65,7 +113,9 @@ type Media struct {
 	Fingerprint string     `json:"-"` // hash of RelPath: how a scan recognises an item it has seen before
 	Title       string     `json:"title"`
 	Kind        Kind       `json:"kind"`
-	RelPath     string     `json:"-"` // path under the library root (file for a video, folder for a comic); never sent to clients
+	Section     Section    `json:"section,omitempty"` // videos only: movies or anime
+	Series      string     `json:"series,omitempty"`  // anime in a series folder only
+	RelPath     string     `json:"-"`                 // path under the library root (file for a video, folder for a comic); never sent to clients
 	MimeType    string     `json:"mimeType,omitempty"`
 	SizeBytes   int64      `json:"sizeBytes"`
 	ModTime     time.Time  `json:"modTime"`

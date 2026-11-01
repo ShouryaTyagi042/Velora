@@ -16,8 +16,11 @@ type Repository interface {
 	List(ctx context.Context, user int64, f ListFilter) ([]Media, error)
 	// Get returns the media with the given id, or ErrNotFound.
 	Get(ctx context.Context, user int64, id string) (Media, error)
-	// ListActors returns every actor with at least one available video, sorted by name.
-	ListActors(ctx context.Context) ([]ActorCount, error)
+	// ListActors returns every actor with at least one available video in section ("" for any),
+	// sorted by name, counting only that section's videos.
+	ListActors(ctx context.Context, section Section) ([]ActorCount, error)
+	// ListSeries returns every anime series with at least one available episode, in natural order.
+	ListSeries(ctx context.Context) ([]SeriesCount, error)
 	// AddActor links a manual actor to a video and returns the updated video. Adding an actor
 	// the video already has is a no-op. ErrNotFound for an unknown id, ErrNotVideo for a comic.
 	// Actors are shared: every user sees them.
@@ -44,9 +47,11 @@ type Syncer interface {
 
 // ListFilter narrows and pages List. Zero values match everything, sorted by title, unpaged.
 type ListFilter struct {
-	Kind  Kind   // "" for all kinds
-	Actor string // exact name, any source; "" for all
-	// Query matches a title or an actor name containing it, ignoring case and accents
+	Kind    Kind    // "" for all kinds
+	Section Section // videos in this section only; "" for everything
+	Series  string  // anime episodes of this series only (exact name); "" for all
+	Actor   string  // exact name, any source; "" for all
+	// Query matches a title, an actor's name or an anime series containing it, ignoring case and accents
 	// ("amelie" finds "Amélie"). "" for all.
 	Query string
 	Sort  Sort
@@ -63,17 +68,24 @@ type ListFilter struct {
 type Sort string
 
 const (
-	SortTitle  Sort = ""       // by title, case-insensitive, then id
-	SortRecent Sort = "recent" // newest AddedAt first, then id descending
+	SortTitle     Sort = ""           // by title, natural and case-insensitive (TitleKey), then id
+	SortTitleDesc Sort = "title_desc" // SortTitle reversed: Z to A, then id descending
+	SortRecent    Sort = "recent"     // newest AddedAt first, then id descending
 )
 
 // Valid reports whether s is a known order.
-func (s Sort) Valid() bool { return s == SortTitle || s == SortRecent }
+func (s Sort) Valid() bool { return s == SortTitle || s == SortTitleDesc || s == SortRecent }
 
 // ActorCount is one row of GET /api/actors.
 type ActorCount struct {
 	Name       string `json:"name"`
 	VideoCount int    `json:"videoCount"`
+}
+
+// SeriesCount is one row of GET /api/series.
+type SeriesCount struct {
+	Name         string `json:"name"`
+	EpisodeCount int    `json:"episodeCount"`
 }
 
 // SyncResult says what one Sync changed.

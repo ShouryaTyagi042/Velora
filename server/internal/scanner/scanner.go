@@ -22,7 +22,7 @@ type Result struct {
 // ctxCheckEvery is how many entries the walk visits between cancellation checks.
 const ctxCheckEvery = 256
 
-// Scan walks fsys and returns every video under movies/ and every comic under comics/.
+// Scan walks fsys and returns every video under movies/ or anime/ and every comic under comics/.
 // Only an unreadable root or a cancelled ctx fails the scan; any other problem
 // becomes a warning, so one bad file can't hide the rest of the library.
 func Scan(ctx context.Context, fsys fs.FS) (Result, error) {
@@ -52,11 +52,11 @@ func Scan(ctx context.Context, fsys fs.FS) (Result, error) {
 
 		top, rest, _ := strings.Cut(p, "/")
 		switch {
-		case top == moviesDir && rest == "":
+		case (top == moviesDir || top == animeDir) && rest == "":
 			return mustBeDir(&res, p, d)
 		case top == comicsDir && rest == "":
 			return mustBeDir(&res, p, d)
-		case top == moviesDir:
+		case top == moviesDir || top == animeDir:
 			scanVideo(&res, p, d)
 			return nil
 		case top == comicsDir && !strings.Contains(rest, "/"):
@@ -66,7 +66,7 @@ func Scan(ctx context.Context, fsys fs.FS) (Result, error) {
 			}
 			return nil // loose file directly in comics/: ignored
 		default:
-			res.warn(p, "not under movies/ or comics/, ignored")
+			res.warn(p, "not under movies/, anime/ or comics/, ignored")
 			return skip(d)
 		}
 	})
@@ -76,7 +76,7 @@ func Scan(ctx context.Context, fsys fs.FS) (Result, error) {
 	return res, nil
 }
 
-// scanVideo records one file under movies/, if it's a video.
+// scanVideo records one file under movies/ or anime/, if it's a video.
 func scanVideo(res *Result, p string, d fs.DirEntry) {
 	if d.IsDir() {
 		return
@@ -100,6 +100,8 @@ func scanVideo(res *Result, p string, d fs.DirEntry) {
 		Fingerprint: idFor(p),
 		Title:       strings.TrimSuffix(d.Name(), path.Ext(d.Name())),
 		Kind:        media.KindVideo,
+		Section:     media.SectionOf(media.KindVideo, p),
+		Series:      media.SeriesOf(media.KindVideo, p),
 		RelPath:     p,
 		MimeType:    mimeType,
 		SizeBytes:   info.Size(),
@@ -137,7 +139,7 @@ func scanComic(res *Result, fsys fs.FS, dir string) {
 	})
 }
 
-// mustBeDir handles "movies" and "comics" at the root: they must be folders.
+// mustBeDir handles "movies", "anime" and "comics" at the root: they must be folders.
 func mustBeDir(res *Result, p string, d fs.DirEntry) error {
 	if !d.IsDir() {
 		res.warn(p, "expected a folder, ignored")

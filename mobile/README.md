@@ -26,18 +26,22 @@ Run the server (`../server`, `make run`) first.
 src/app/_layout.tsx                 root Stack, guarded by the session: the tabs, Details, player, reader when
                                     signed in; login when not (Stack.Protected)
 src/app/login.tsx                   username and password; no signup (users are made with velora-admin)
-src/app/(tabs)/_layout.tsx          native tabs: Home, Videos, Comics, Search (glass tab bar on iOS 26)
-src/app/(tabs)/(home)/index.tsx     "/": Continue watching / reading, recently added; sign out in the header
-src/app/(tabs)/(videos)/videos.tsx  videos, 2 across, filtered by actor (in the URL); pull to rescan
+src/app/(tabs)/_layout.tsx          native tabs: Home, Videos, Anime, Comics, Search (glass tab bar on iOS 26)
+src/app/(tabs)/(home)/index.tsx     "/": Continue watching / reading, new videos / anime / comics; sign out in the header
+src/app/(tabs)/(videos)/videos.tsx  videos from movies/, 2 across, filtered by actor (in the URL); pull to rescan
+src/app/(tabs)/(anime)/anime.tsx    the same screen (components/VideoShelf) for anime/, filtered by series
 src/app/(tabs)/(comics)/comics.tsx  comic covers, 3 across; pull to rescan
 src/app/(tabs)/(search)/search.tsx  titles and actors, searched on the phone
-src/app/media/[id].tsx              details: Play / Resume / Read, actors (add and remove manual ones)
+src/app/media/[id].tsx              video details: Play / Resume, series, actors (add and remove manual ones);
+                                    a comic's card opens the reader directly (navigation/openMedia)
 src/app/player/[id].tsx             expo-video with glass controls (native controls in fullscreen); resumes
 src/app/reader/[id].tsx             paged comic reader: pinch-zoom, preload, direction setting; resumes
 src/theme/                          design tokens (colours light + dark, space, radius, type roles, glass roles)
 src/api/                            getJSON/sendJSON (with the Bearer token), ApiError, Media types, URLs for
                                     streams, pages, thumbnails; authHeaders for the player and images
 src/auth/                           AuthProvider (session state, 401 → login), token in SecureStore
+src/preview/                        long-press previews: one shared muted player (PreviewProvider, around the
+                                    tabs), which card is previewing (a tiny external store), the overlay
 src/progress/                       local-first progress saves (throttled, one in flight) and launch reconcile
 src/hooks/                          useAsync, usePlayerStatus, useGlass, usePreload
 src/components/                     Text, Button, Skeleton, Surface (glass or fallback), Icon, MediaCard, Poster,

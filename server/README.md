@@ -23,6 +23,8 @@ make fmt vet test   # test loads .env too; without VELORA_TEST_DSN the Postgres 
 
 `velora-admin create-user <name>` reads the password from the terminal without echo, or from the first line of stdin when it isn't a terminal. The first user created gets id 1 and with it any progress saved before phase 11.
 
+After a video's metadata, the extractor also cuts its long-press preview (phase 14, `ffmpeg.Preview`), in small batches between metadata rounds so new videos get thumbnails first. A replaced file (new `modTime`) gets a new preview; a file that fails 3 times is left alone.
+
 On start the server applies any new migrations (`migrations/*.sql`, embedded in the binary, each applied once and recorded in `schema_migrations`), scans the library, and starts the metadata extractor.
 
 `Ctrl+C` (or `SIGTERM`) shuts down gracefully: new connections are refused and in-flight requests get up to 10 s to finish. A second `Ctrl+C` exits immediately.
@@ -32,10 +34,10 @@ On start the server applies any new migrations (`migrations/*.sql`, embedded in 
 | Var | Default | Meaning |
 |---|---|---|
 | `VELORA_ADDR` | `:8080` | Listen address. `:8080` binds every interface; `127.0.0.1:8080` would make it unreachable from the phone. |
-| `VELORA_MEDIA_DIR` | *(required)* | The library folder, holding `movies/` and `comics/` (below). The server won't start without it. |
+| `VELORA_MEDIA_DIR` | *(required)* | The library folder, holding `movies/`, `anime/` and `comics/` (below). The server won't start without it. |
 | `VELORA_CORS_ORIGINS` | *(none)* | Comma-separated browser origins allowed to call the API, e.g. `http://localhost:8081` for Expo web. Only browsers enforce CORS; the phone app doesn't need it. Never `*`. |
 | `VELORA_DATABASE_URL` | *(required)* | Postgres DSN, e.g. `postgres://velora:velora-dev@localhost:5432/velora?sslmode=disable`. It holds a password: it is logged only redacted (`postgres://velora:xxxxx@…`) and never sent to a client. |
-| `VELORA_CACHE_DIR` | the OS cache dir + `/velora` | Velora's own derived files: `thumbs/{id}.jpg`. If you delete it, also `delete from video_metadata`, or the extractor won't redo videos it already finished. |
+| `VELORA_CACHE_DIR` | the OS cache dir + `/velora` | Velora's own derived files: `thumbs/{id}.jpg` and `previews/{id}.mp4`. If you delete it, also `delete from video_metadata`, or the extractor won't redo videos it already finished. |
 | `VELORA_WORKERS` | half the CPUs | How many videos have metadata and thumbnails extracted at once (1–64). |
 | `VELORA_TEST_DSN` | *(none)* | Tests only: a database the Postgres tests may wipe. Unset, they skip. |
 
@@ -52,12 +54,16 @@ The folder structure is data (ADR 013 in the curriculum):
 │   │   ├── The Matrix.mp4         ← one video; title = filename without extension
 │   │   └── Extras/Deleted.mkv     ← nested: still Keanu Reeves
 │   └── Loose Clip.mp4             ← no actor folder: no actors
+├── anime/                         ← shown in the app's Anime tab
+│   ├── Cowboy Bebop/Session 1.mkv ← the folder name is the episode's series (not an actor)
+│   └── OVA.mkv                    ← no series folder: no series
 └── comics/
     └── Watchmen/                  ← one comic; title = folder name
         ├── page-1.png             ← pages in natural order: page-2 before page-10
         └── page-10.png
 ```
 
+- Anime are videos (same streaming, thumbnails, metadata and watch progress), with `"section":"anime"` instead of `"movies"`. The folder under `anime/` is the `series` (stored in `media.series`, indexed), never a folder actor: a series is a show, an actor a person, and keeping them apart keeps the actor list and actor filter about people. Anime can still get manual actors (voice actors) in the app. The section is the top-level folder, so moving a file between `movies/` and `anime/` makes it a new item, like any rename.
 - Videos: `.mp4 .mkv .webm .mov`. Comic pages: `.jpg .jpeg .png .webp`. Other files are ignored.
 - One file per actor folder. Further actors are added in the app (`POST /api/media/{id}/actors`), not by copying files.
 - Hidden files (`.DS_Store`, `._*`) are skipped. Anything else at the root, a comic with no images, or a
@@ -90,10 +96,12 @@ Every response is JSON (`Content-Type: application/json; charset=utf-8`) and car
 | Method & path | Success | Errors |
 |---|---|---|
 | `GET /health` | `200 {"status":"ok"}` | |
-| `GET /api/media` | One page: `200 {"items":[Media, ...], "nextCursor":"…"\|null}`, sorted by title. `ETag` + `Cache-Control: private, no-cache`; `If-None-Match` with the same tag gives `304` and no body | |
+| `GET /api/media` | One page: `200 {"items":[Media, ...], "nextCursor":"…"\|null}`, sorted by title in natural order (`Episode 2` before `Episode 10`), ignoring ASCII case. `ETag` + `Cache-Control: private, no-cache`; `If-None-Match` with the same tag gives `304` and no body | |
 | `GET /api/media?kind=video\|comic` | that kind only | `400 validation` for any other `kind` |
+| `GET /api/media?section=movies\|anime` | videos from `movies/` or `anime/` only (no comics) | `400 validation` for any other `section` |
+| `GET /api/media?series=<name>` | anime episodes of that series (exact match) | `400 validation` if empty or over 200 bytes |
 | `GET /api/media?actor=<name>` | with that actor (exact match); an unknown actor gives `[]` | `400 validation` if empty or over 200 bytes |
-| `GET /api/media?q=<text>` | titles or actor names containing `text`, ignoring case and accents (`amelie` finds `Amélie`); blank is no search | `400 validation` if over 200 bytes |
+| `GET /api/media?q=<text>` | titles, actor names or anime series containing `text`, ignoring case and accents (`amelie` finds `Amélie`); blank is no search | `400 validation` if over 200 bytes |
 | `GET /api/media?sort=title\|recent` | `recent`: newest first (by when the scan first saw it) | `400 validation` for any other `sort` |
 | `GET /api/media?limit=<n>&after=<cursor>` | `limit` 1–200 (default 50); `after` is the previous page's `nextCursor`. All the filters combine | `400 validation` for a bad `limit`, or a cursor that isn't from this list's `sort` |
 | `GET /api/media/{id}` | `200 Media` | `404 not_found` |
@@ -102,10 +110,12 @@ Every response is JSON (`Content-Type: application/json; charset=utf-8`) and car
 | `GET /api/media/{id}/pages/{n}` | `200` the image of page `n` (0-based), with `Last-Modified`/`304` and ranges; with `?v=<modTime>` also `Cache-Control: private, immutable` | `400 validation` if `n` isn't a number; `404 not_found` if out of range, not a comic, or deleted since the scan |
 | `POST /api/media/{id}/actors` | `200 Media` with the actor added; adding one it already has is a no-op `200`. Body `{"name":"Carrie-Anne Moss"}`, 1–100 characters after trimming | `400 validation` (bad body, or a comic), `404 not_found` |
 | `DELETE /api/media/{id}/actors/{name}` | `204` | `404 not_found` (no such link), `409 conflict` for a folder actor (rename the folder instead) |
-| `GET /api/actors` | `200 {"items":[{"name":"Keanu Reeves","videoCount":2}]}`: available videos per actor, both sources | |
+| `GET /api/actors` | `200 {"items":[{"name":"Keanu Reeves","videoCount":2}]}`: available videos per actor, both sources. `?section=movies\|anime` counts only that section's videos | `400 validation` for any other `section` |
+| `GET /api/series` | `200 {"items":[{"name":"Cowboy Bebop","episodeCount":26}]}`: available episodes per anime series, in natural order | |
 | `PUT /api/media/{id}/progress` | `200 Progress` as stored. Body: `{"positionMs","durationMs","clientTs"}` for a video, `{"page","pageCount","clientTs"}` for a comic. A save older (by `clientTs`) than the stored one is accepted and ignored | `400 validation`, `404 not_found` |
 | `GET /api/media/{id}/progress` | `200 Progress` | `404 not_found` if never started |
 | `GET /api/continue` | `200 {"watching":[Media],"reading":[Media]}`: the signed-in user's unfinished items, newest first, 10 each. `ETag`/`304` like the list | |
+| `GET /api/media/{id}/preview?v=<modTime>` | `200 video/mp4`: the long-press preview, a silent ~12 s montage of four 3 s cuts (at 15/35/55/75%), ≤360 px high, 24 fps, faststart. Ranges work; `private, immutable` with `?v=`. Present exactly when the video's `"video":{"preview":true}` | `404 not_found`: not a video, or no preview of the file as it is now (not made yet, failed, or the file changed since) |
 | `GET` or `HEAD /api/media/{id}/stream` | `200` whole video, or `206 Partial Content` for a `Range: bytes=…` request (seeking); `304` for a matching `If-Modified-Since`. `Content-Type` comes from the file's extension; `Accept-Ranges: bytes` on every response | `404 not_found` for an unknown id, a comic, or a file deleted since the last scan; `416` for a range past the end |
 | `POST /api/scan` | `202 Job` at once, with `Location: /api/jobs/{id}`; the scan of `VELORA_MEDIA_DIR` runs in the background. While one runs, every request gets that same job. When done, the job's `result` is `{"found":6,"missing":0,"warnings":[...]}` | |
 | `GET /api/jobs/{id}` | `200 {"id":"j_…","name":"scan","status":"running","startedAt":…}`. `status` is `running`, `done`, `failed` (the server log has why) or `canceled` (shutdown); `progress: {"done":120,"total":200}` while known. `Cache-Control: no-store` | `404 not_found`: unknown, or forgotten (the last 50 jobs are kept, in memory) |
@@ -116,7 +126,7 @@ Any other method on a known path returns `405`. Unknown paths return the mux's p
 `Media`:
 
 ```json
-{ "id": "7", "title": "The Matrix", "kind": "video", "mimeType": "video/mp4",
+{ "id": "7", "title": "The Matrix", "kind": "video", "section": "movies", "mimeType": "video/mp4",
   "sizeBytes": 2147483648, "modTime": "2026-10-04T00:00:00Z", "addedAt": "2026-10-04T00:00:00Z",
   "actors": [{ "name": "Keanu Reeves", "source": "folder" }, { "name": "Carrie-Anne Moss", "source": "manual" }],
   "video": { "durationMs": 8160000, "width": 1920, "height": 800, "codec": "h264", "fps": 23.976 },
@@ -128,7 +138,7 @@ Any other method on a known path returns `405`. Unknown paths return the mux's p
   "progress": { "page": 11, "pageCount": 24, "completed": false, "updatedAt": "2026-10-28T21:20:00Z" } }
 ```
 
-`actors` appears only on videos that have one: `folder` actors come from the folder layout and change only by renaming it; `manual` ones are added in the app and survive rescans. `video` appears once the extractor has run, `progress` once the signed-in user started the item (`completed` is decided by the server: 95% of a video, or a comic's last page). `comic` appears only on comics. File paths and page filenames are never sent; clients refer to media by `id` only.
+`section` (`movies` or `anime`) appears on videos only, `series` on anime in a series folder only. `actors` appears only on videos that have one: `folder` actors come from the folder layout and change only by renaming it; `manual` ones are added in the app and survive rescans. `video` appears once the extractor has run, `progress` once the signed-in user started the item (`completed` is decided by the server: 95% of a video, or a comic's last page). `comic` appears only on comics. File paths and page filenames are never sent; clients refer to media by `id` only.
 
 ### Errors
 

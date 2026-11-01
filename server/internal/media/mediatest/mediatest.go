@@ -243,6 +243,115 @@ func Run(t *testing.T, open func(t *testing.T) Store) {
 		actors(t, s, []media.ActorCount{count("Keanu Reeves", 2), count("Matthew McConaughey", 1)})
 	})
 
+	t.Run("sections", func(t *testing.T) {
+		s := open(t)
+		lib := append(Library(), video("anime/Cowboy Bebop/Session 1.mkv", "Session 1", ""),
+			video("anime/Cowboy Bebop/Session 2.mkv", "Session 2", ""),
+			video("anime/Trigun/Episode 1.mkv", "Episode 1", ""),
+			video("anime/OVA.mkv", "OVA", "")) // no series
+		if _, err := s.Sync(ctx, lib, t0); err != nil {
+			t.Fatal(err)
+		}
+		tests := []struct {
+			f    media.ListFilter
+			want []string
+		}{
+			{media.ListFilter{Section: media.SectionAnime}, []string{"Episode 1", "OVA", "Session 1", "Session 2"}},
+			{media.ListFilter{Series: "Cowboy Bebop"}, []string{"Session 1", "Session 2"}},
+			{media.ListFilter{Series: "cowboy bebop"}, nil},                        // exact, like an actor
+			{media.ListFilter{Series: "Cowboy%"}, nil},                             // % is a character, not a wildcard
+			{media.ListFilter{Query: "bebop"}, []string{"Session 1", "Session 2"}}, // search finds the series
+			{media.ListFilter{Query: "trigun", Section: media.SectionMovies}, nil}, // filters combine
+			{media.ListFilter{Section: media.SectionMovies}, []string{"Interstellar", "John Wick", "Loose Clip", "The Matrix"}},
+			{media.ListFilter{Section: media.SectionAnime, Kind: media.KindComic}, nil},
+			{media.ListFilter{Section: media.SectionAnime, Actor: "Keanu Reeves"}, nil},
+		}
+		for _, tt := range tests {
+			if got := titles(list(t, s, tt.f)); !slices.Equal(got, tt.want) {
+				t.Errorf("List(%+v) = %v, want %v", tt.f, got, tt.want)
+			}
+		}
+		if m := byTitle(t, s, "Session 1"); m.Section != media.SectionAnime || m.Series != "Cowboy Bebop" || len(m.Actors) != 0 {
+			t.Errorf("Session 1 = section %q, series %q, actors %v; want anime, Cowboy Bebop, none", m.Section, m.Series, m.Actors)
+		}
+		if m := byTitle(t, s, "The Matrix"); m.Series != "" {
+			t.Errorf("The Matrix series = %q, want none", m.Series)
+		}
+		if m := byTitle(t, s, "Watchmen"); m.Section != "" {
+			t.Errorf("Watchmen section = %q, want none", m.Section)
+		}
+		got, err := s.ListActors(ctx, media.SectionAnime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 0 {
+			t.Errorf("ListActors(anime) = %v, want none: a series is not an actor", got)
+		}
+		series, err := s.ListSeries(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := []media.SeriesCount{{Name: "Cowboy Bebop", EpisodeCount: 2}, {Name: "Trigun", EpisodeCount: 1}}; !slices.Equal(series, want) {
+			t.Errorf("ListSeries = %v, want %v", series, want)
+		}
+		got, err = s.ListActors(ctx, media.SectionMovies)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := []media.ActorCount{count("Keanu Reeves", 2), count("Matthew McConaughey", 1)}; !slices.Equal(got, want) {
+			t.Errorf("ListActors(movies) = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("titles sort naturally", func(t *testing.T) {
+		s := open(t)
+		var lib []media.Media
+		for _, title := range []string{"Episode 116", "Episode 10", "Episode 2", "episode 1b", "Episode 01", "Episode", "007"} {
+			lib = append(lib, video("anime/Show/"+title+".mp4", title, ""))
+		}
+		if _, err := s.Sync(ctx, lib, t0); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"007", "Episode", "Episode 01", "episode 1b", "Episode 2", "Episode 10", "Episode 116"}
+		if got := titles(list(t, s, media.ListFilter{})); !slices.Equal(got, want) {
+			t.Errorf("List = %v, want %v", got, want)
+		}
+		// Paging walks the same order: the cursor compares by the same key.
+		var got []string
+		f := media.ListFilter{Limit: 3}
+		for range 10 {
+			page := list(t, s, f)
+			if len(page) == 0 {
+				break
+			}
+			got = append(got, titles(page)...)
+			f.After = page[len(page)-1].ID
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("paged = %v, want %v", got, want)
+		}
+
+		// Z to A: the same order reversed, whole and paged.
+		desc := slices.Clone(want)
+		slices.Reverse(desc)
+		if got := titles(list(t, s, media.ListFilter{Sort: media.SortTitleDesc})); !slices.Equal(got, desc) {
+			t.Errorf("List(title_desc) = %v, want %v", got, desc)
+		}
+		got = nil
+		f = media.ListFilter{Sort: media.SortTitleDesc, Limit: 3}
+		for range 10 {
+			page := list(t, s, f)
+			if len(page) == 0 {
+				break
+			}
+			got = append(got, titles(page)...)
+			f.After = page[len(page)-1].ID
+		}
+		if !slices.Equal(got, desc) {
+			t.Errorf("paged title_desc = %v, want %v", got, desc)
+		}
+	})
+
 	t.Run("search ignores case and accents", func(t *testing.T) {
 		s := open(t)
 		lib := append(Library(), video("movies/Amélie.mp4", "Amélie", ""))
@@ -490,7 +599,7 @@ func byTitle(t *testing.T, s Store, title string) media.Media {
 
 func actors(t *testing.T, s Store, want []media.ActorCount) {
 	t.Helper()
-	got, err := s.ListActors(context.Background())
+	got, err := s.ListActors(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}

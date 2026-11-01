@@ -25,7 +25,7 @@ const (
 	maxLimit     = 200
 )
 
-// listMedia handles GET /api/media?kind=video|comic&actor=<name>&q=<text>&sort=title|recent
+// listMedia handles GET /api/media?kind=video|comic&section=movies|anime&series=<name>&actor=<name>&q=<text>&sort=title|title_desc|recent
 // &limit=<n>&after=<cursor>: one page of the library.
 //
 // Every request is a page. Before phase 12 this returned the whole library: at 100k items that was
@@ -37,8 +37,20 @@ func listMedia(repo media.Repository) HandlerE {
 		if f.Kind != "" && !f.Kind.Valid() {
 			return validationError("kind must be %q or %q", media.KindVideo, media.KindComic)
 		}
+		section, err := parseSection(q.Get("section"))
+		if err != nil {
+			return err
+		}
+		f.Section = section
 		if q.Has("actor") && f.Actor == "" {
 			return validationError("actor must be non-empty")
+		}
+		f.Series = q.Get("series")
+		if q.Has("series") && f.Series == "" {
+			return validationError("series must be non-empty")
+		}
+		if len(f.Series) > maxFilterLen {
+			return validationError("series must be at most %d bytes", maxFilterLen)
 		}
 		f.Query = strings.TrimSpace(q.Get("q")) // an empty search is no search
 		if len(f.Actor) > maxFilterLen || len(f.Query) > maxFilterLen {
@@ -47,10 +59,12 @@ func listMedia(repo media.Repository) HandlerE {
 		switch s := q.Get("sort"); s {
 		case "", "title":
 			f.Sort = media.SortTitle
+		case "title_desc":
+			f.Sort = media.SortTitleDesc
 		case "recent":
 			f.Sort = media.SortRecent
 		default:
-			return validationError(`sort must be "title" or "recent"`)
+			return validationError(`sort must be "title", "title_desc" or "recent"`)
 		}
 		if s := q.Get("limit"); s != "" {
 			n, err := strconv.Atoi(s)
@@ -85,6 +99,15 @@ func listMedia(repo media.Repository) HandlerE {
 	}
 }
 
+// parseSection reads ?section=: "" for all, or a known section.
+func parseSection(s string) (media.Section, error) {
+	sec := media.Section(s)
+	if sec != "" && !sec.Valid() {
+		return "", validationError("section must be %q or %q", media.SectionMovies, media.SectionAnime)
+	}
+	return sec, nil
+}
+
 // A cursor is the order it belongs to and the id of the last item sent, base64url-encoded so
 // clients treat it as opaque and don't build their own. It says where the page ended, not what
 // was in it; the repository finds that item's sort key itself (media.ListFilter.After).
@@ -104,8 +127,11 @@ func decodeCursor(c string, s media.Sort) (string, bool) {
 }
 
 func sortName(s media.Sort) string {
-	if s == media.SortRecent {
+	switch s {
+	case media.SortRecent:
 		return "recent"
+	case media.SortTitleDesc:
+		return "title_desc"
 	}
 	return "title"
 }

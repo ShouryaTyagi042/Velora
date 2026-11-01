@@ -84,6 +84,7 @@ func TestEndpoints(t *testing.T) {
 		{"list limit not a number", "/api/media?limit=ten", 400, "validation"},
 		{"list cursor not base64", "/api/media?after=%25%25", 400, "validation"},
 		{"list cursor from the other sort", "/api/media?sort=recent&after=" + encodeCursor(media.SortTitle, "v1"), 400, "validation"},
+		{"list ascending cursor on descending", "/api/media?sort=title_desc&after=" + encodeCursor(media.SortTitle, "v1"), 400, "validation"},
 		{"get existing", "/api/media/v1", 200, ""},
 		{"get missing", "/api/media/nope", 404, "not_found"},
 		{"thumbnail pending", "/api/media/v1/thumbnail", 202, ""},
@@ -138,6 +139,8 @@ func TestListFilters(t *testing.T) {
 		{"?q=keanu", []string{"v1"}},              // search: actor
 		{"?q=%20%20", []string{"v2", "v1", "c1"}}, // a blank search is no search
 		{"?limit=2", []string{"v2", "v1"}},
+		{"?sort=title_desc", []string{"c1", "v1", "v2"}}, // Watchmen, The Matrix, Interstellar
+		{"?sort=title_desc&kind=comic", []string{"c1"}},
 	}
 	h := newTestHandler()
 	for _, tt := range tests {

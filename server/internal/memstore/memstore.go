@@ -40,6 +40,8 @@ type progressKey struct {
 func New(seed []media.Media) *Store {
 	s := &Store{items: make(map[string]*entry, len(seed)), progress: map[progressKey]media.Progress{}}
 	for _, m := range seed {
+		m.Section = media.SectionOf(m.Kind, m.RelPath)
+		m.Series = media.SeriesOf(m.Kind, m.RelPath)
 		s.items[m.ID] = &entry{m: m}
 	}
 	return s
@@ -54,6 +56,8 @@ func (s *Store) Sync(ctx context.Context, items []media.Media, scannedAt time.Ti
 	seen := make(map[string]bool, len(items))
 	for _, m := range items {
 		m.ID = m.Fingerprint
+		m.Section = media.SectionOf(m.Kind, m.RelPath)
+		m.Series = media.SeriesOf(m.Kind, m.RelPath)
 		seen[m.ID] = true
 		m.Actors = folderActors(m.Actors) // the scanner only owns folder links
 		if old, ok := s.items[m.ID]; ok {
@@ -79,8 +83,11 @@ func (s *Store) Sync(ctx context.Context, items []media.Media, scannedAt time.Ti
 // then by id so equal titles keep a stable order).
 func (s *Store) List(ctx context.Context, user int64, f media.ListFilter) ([]media.Media, error) {
 	order := byTitle
-	if f.Sort == media.SortRecent {
+	switch f.Sort {
+	case media.SortRecent:
 		order = byRecent
+	case media.SortTitleDesc:
+		order = func(a, b media.Media) int { return byTitle(b, a) }
 	}
 	q := media.Fold(f.Query)
 
@@ -97,7 +104,8 @@ func (s *Store) List(ctx context.Context, user int64, f media.ListFilter) ([]med
 	}
 	out := make([]media.Media, 0, len(s.items))
 	for _, e := range s.items {
-		if e.missing || (f.Kind != "" && e.m.Kind != f.Kind) || (f.Actor != "" && !e.m.HasActor(f.Actor)) ||
+		if e.missing || (f.Kind != "" && e.m.Kind != f.Kind) || (f.Section != "" && e.m.Section != f.Section) ||
+			(f.Series != "" && e.m.Series != f.Series) || (f.Actor != "" && !e.m.HasActor(f.Actor)) ||
 			(q != "" && !matches(e.m, q)) || (after != nil && order(e.m, *after) <= 0) {
 			continue
 		}
@@ -114,16 +122,17 @@ func (s *Store) List(ctx context.Context, user int64, f media.ListFilter) ([]med
 
 // byTitle and byRecent are List's orders (media.SortTitle, media.SortRecent).
 func byTitle(a, b media.Media) int {
-	return cmp.Or(strings.Compare(strings.ToLower(a.Title), strings.ToLower(b.Title)), strings.Compare(a.ID, b.ID))
+	return cmp.Or(strings.Compare(media.TitleKey(a.Title), media.TitleKey(b.Title)), strings.Compare(a.ID, b.ID))
 }
 
 func byRecent(a, b media.Media) int {
 	return cmp.Or(b.AddedAt.Compare(a.AddedAt), strings.Compare(b.ID, a.ID))
 }
 
-// matches reports whether m's title or one of its actors contains q, which is already folded.
+// matches reports whether m's title, one of its actors or its series contains q, which is already
+// folded.
 func matches(m media.Media, q string) bool {
-	if strings.Contains(media.Fold(m.Title), q) {
+	if strings.Contains(media.Fold(m.Title), q) || (m.Series != "" && strings.Contains(media.Fold(m.Series), q)) {
 		return true
 	}
 	for _, a := range m.Actors {
@@ -190,11 +199,11 @@ func (s *Store) Continue(ctx context.Context, user int64, kind media.Kind, limit
 }
 
 // ListActors counts available videos per actor, both sources.
-func (s *Store) ListActors(ctx context.Context) ([]media.ActorCount, error) {
+func (s *Store) ListActors(ctx context.Context, section media.Section) ([]media.ActorCount, error) {
 	s.mu.RLock()
 	counts := map[string]int{}
 	for _, e := range s.items {
-		if e.missing || e.m.Kind != media.KindVideo {
+		if e.missing || e.m.Kind != media.KindVideo || (section != "" && e.m.Section != section) {
 			continue
 		}
 		for _, a := range e.m.Actors {
@@ -208,6 +217,27 @@ func (s *Store) ListActors(ctx context.Context) ([]media.ActorCount, error) {
 		out = append(out, media.ActorCount{Name: name, VideoCount: n})
 	}
 	slices.SortFunc(out, func(a, b media.ActorCount) int { return strings.Compare(a.Name, b.Name) })
+	return out, nil
+}
+
+// ListSeries counts available episodes per anime series, in natural order.
+func (s *Store) ListSeries(ctx context.Context) ([]media.SeriesCount, error) {
+	s.mu.RLock()
+	counts := map[string]int{}
+	for _, e := range s.items {
+		if !e.missing && e.m.Series != "" {
+			counts[e.m.Series]++
+		}
+	}
+	s.mu.RUnlock()
+
+	out := make([]media.SeriesCount, 0, len(counts))
+	for name, n := range counts {
+		out = append(out, media.SeriesCount{Name: name, EpisodeCount: n})
+	}
+	slices.SortFunc(out, func(a, b media.SeriesCount) int {
+		return cmp.Or(strings.Compare(media.TitleKey(a.Name), media.TitleKey(b.Name)), strings.Compare(a.Name, b.Name))
+	})
 	return out, nil
 }
 

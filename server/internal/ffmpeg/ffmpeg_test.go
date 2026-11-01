@@ -77,3 +77,76 @@ func TestParseRate(t *testing.T) {
 		}
 	}
 }
+
+// TestPreview cuts a preview from a generated 60 s, 640×480 video with an audio track: four 3 s
+// cuts at 24 fps, scaled to 360 high, silent, and nothing left behind in the folder but the result.
+func TestPreview(t *testing.T) {
+	if err := Check(); err != nil {
+		t.Skip(err)
+	}
+	dir := t.TempDir()
+	in := filepath.Join(dir, "-film.mp4")
+	cmd := exec.Command("ffmpeg", "-v", "error",
+		"-f", "lavfi", "-i", "testsrc=duration=60:size=640x480:rate=30",
+		"-f", "lavfi", "-i", "sine=duration=60",
+		"-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", "file:"+in)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("can't generate a test video: %v: %s", err, out)
+	}
+
+	out := filepath.Join(dir, "preview.mp4")
+	if err := Preview(context.Background(), in, out, 60_000); err != nil {
+		t.Fatal(err)
+	}
+	v, err := Probe(context.Background(), out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Width != 480 || v.Height != 360 || v.Codec != "h264" || v.FPS != 24 {
+		t.Errorf("preview = %+v, want 480×360 h264 at 24 fps", v)
+	}
+	if v.DurationMs < 11_500 || v.DurationMs > 12_500 {
+		t.Errorf("preview DurationMs = %d, want about 12000 (4 × 3 s)", v.DurationMs)
+	}
+	streams, err := exec.Command("ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", "file:"+out).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(streams); got != "video\n" {
+		t.Errorf("preview streams = %q, want only one video stream", got)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 2 {
+		t.Errorf("folder holds %d entries, want 2 (the film and the preview): the temp folder leaked", len(entries))
+	}
+}
+
+func TestPreviewShortVideoAndNoUpscale(t *testing.T) {
+	in := testVideo(t) // 2 s, 320×240
+	out := filepath.Join(t.TempDir(), "preview.mp4")
+	if err := Preview(context.Background(), in, out, 2000); err != nil {
+		t.Fatal(err)
+	}
+	v, err := Probe(context.Background(), out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Height != 240 {
+		t.Errorf("height = %d, want 240: a preview must never scale up", v.Height)
+	}
+}
+
+func TestPreviewFailureLeavesNothing(t *testing.T) {
+	if err := Check(); err != nil {
+		t.Skip(err)
+	}
+	dir := t.TempDir()
+	in := filepath.Join(dir, "fake.mp4")
+	os.WriteFile(in, []byte("not a video"), 0o644)
+	if err := Preview(context.Background(), in, filepath.Join(dir, "preview.mp4"), 60_000); err == nil {
+		t.Fatal("Preview(garbage) = nil error")
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Errorf("folder holds %d entries after a failure, want only the input", len(entries))
+	}
+}

@@ -1,18 +1,19 @@
 import { router } from "expo-router";
 import { Pressable, StyleSheet, View } from "react-native";
 
-import { ActorSource, type ActorTag } from "@/api/media";
+import { ActorSource, Section, type ActorTag } from "@/api/media";
 import { radius, space, useAppTheme } from "@/theme";
 import { Chip } from "./Chip";
 import { Icon } from "./Icon";
 
-type Props = { tag: ActorTag; onRemove?: () => void };
+// section is the video's: an anime episode's chip opens the Anime tab, anything else Videos.
+type Props = { tag: ActorTag; section?: Section; onRemove?: () => void };
 
-// ActorChip opens the Videos tab filtered to this actor. The router encodes the name (spaces,
+// ActorChip opens the video's tab (Videos or Anime) filtered to this actor. The router encodes the name (spaces,
 // accents, "&") for the URL; never concatenate it. Manual actors get a remove button when
 // onRemove is given; folder actors never do: the folder owns them, and the next scan would put
 // them back.
-export function ActorChip({ tag, onRemove }: Props) {
+export function ActorChip({ tag, section, onRemove }: Props) {
   const { colors } = useAppTheme();
   const removable = onRemove && tag.source === ActorSource.Manual;
   return (
@@ -20,7 +21,7 @@ export function ActorChip({ tag, onRemove }: Props) {
       <Chip
         label={tag.name}
         accessibilityLabel={`${tag.name}, show their videos`}
-        onPress={() => router.push({ pathname: "/videos", params: { actor: tag.name } })}
+        onPress={() => router.push({ pathname: section === Section.Anime ? "/anime" : "/videos", params: { actor: tag.name } })}
       />
       {removable && (
         <Pressable

@@ -1,5 +1,5 @@
 // Package extractor fills in each video's metadata and thumbnail outside the request path,
-// several videos at a time.
+// several videos at a time, and then its long-press preview (phase 14).
 //
 // Its queue is the database: "which videos still need metadata" is a query, so a crash or
 // restart loses nothing, and the API never waits for ffprobe. Phase 13 made it concurrent: a
@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ShouryaTyagi042/Velora/server/internal/ffmpeg"
@@ -27,6 +28,14 @@ type Store interface {
 	Pending(ctx context.Context, limit int) ([]media.Media, error)
 	SetVideoMeta(ctx context.Context, id string, v media.VideoMeta) error
 	RecordFailure(ctx context.Context, id string, reason string) error
+
+	// PendingPreviews returns up to limit videos with metadata whose preview is missing or older
+	// than the file (by ModTime), oldest first, with Video.DurationMs and ModTime filled in.
+	// Videos whose preview failed MaxAttempts times are not pending.
+	PendingPreviews(ctx context.Context, limit int) ([]media.Media, error)
+	// SetPreview records that id's preview was made from the file as it was at modTime.
+	SetPreview(ctx context.Context, id string, modTime time.Time) error
+	RecordPreviewFailure(ctx context.Context, id string, reason string) error
 }
 
 const (
@@ -35,31 +44,44 @@ const (
 	MaxAttempts = 3
 	// roundSize bounds one round's list, so a 100k-video library isn't read into memory at once.
 	roundSize = 500
+	// previewsPerWorker is how many previews a preview round makes per worker. Previews are slow
+	// (seconds each), so they go in small batches: between two batches, the loop looks for
+	// metadata work first, and a newly scanned video gets its thumbnail without waiting for a
+	// whole library's previews.
+	previewsPerWorker = 2
 )
 
-// Extractor probes pending videos, Workers at a time, and writes their thumbnails to ThumbDir.
+// Extractor probes pending videos, Workers at a time, and writes their thumbnails to ThumbDir,
+// then their previews to PreviewDir.
 type Extractor struct {
-	Store    Store
-	MediaDir string         // the library root; a video's file is MediaDir/RelPath
-	ThumbDir string         // thumbnails are ThumbDir/{id}.jpg
-	Workers  int            // how many videos are extracted at once; at least 1
-	Idle     time.Duration  // how long to wait for a Wake before looking again anyway
-	Jobs     *jobs.Registry // where each round is reported; nil reports nowhere
+	Store      Store
+	MediaDir   string         // the library root; a video's file is MediaDir/RelPath
+	ThumbDir   string         // thumbnails are ThumbDir/{id}.jpg
+	PreviewDir string         // previews are PreviewDir/{id}.mp4; "" makes none
+	Workers    int            // how many videos are extracted at once; at least 1
+	Idle       time.Duration  // how long to wait for a Wake before looking again anyway
+	Jobs       *jobs.Registry // where each round is reported; nil reports nowhere
 
 	// The FFmpeg calls; tests replace them.
 	Probe     func(ctx context.Context, path string) (media.VideoMeta, error)
 	Thumbnail func(ctx context.Context, in, out string, at time.Duration) error
+	Preview   func(ctx context.Context, in, out string, durationMs int) error
 
 	wakeOnce sync.Once
 	wake     chan struct{}
 }
 
 // New returns an Extractor that runs the real ffprobe and ffmpeg, workers at a time.
-func New(store Store, mediaDir, thumbDir string, workers int, reg *jobs.Registry) *Extractor {
+func New(store Store, mediaDir, thumbDir, previewDir string, workers int, reg *jobs.Registry) *Extractor {
 	return &Extractor{
-		Store: store, MediaDir: mediaDir, ThumbDir: thumbDir, Workers: workers, Jobs: reg,
-		Idle: time.Minute, Probe: ffmpeg.Probe, Thumbnail: ffmpeg.Thumbnail,
+		Store: store, MediaDir: mediaDir, ThumbDir: thumbDir, PreviewDir: previewDir, Workers: workers, Jobs: reg,
+		Idle: time.Minute, Probe: ffmpeg.Probe, Thumbnail: ffmpeg.Thumbnail, Preview: ffmpeg.Preview,
 	}
+}
+
+// PreviewPath is where the preview of media id lives.
+func PreviewPath(previewDir, id string) string {
+	return filepath.Join(previewDir, id+".mp4")
 }
 
 // ThumbPath is where the thumbnail of media id lives.
@@ -82,12 +104,17 @@ func (e *Extractor) Wake() {
 	}
 }
 
-// Run extracts until ctx is cancelled: a round whenever there is work, then waits for a Wake,
-// or Idle as a fallback. A failing database is logged and retried after Idle, like an empty queue.
+// Run extracts until ctx is cancelled: a metadata round whenever there is metadata work, else a
+// small preview round, then waits for a Wake, or Idle as a fallback. Metadata always comes first:
+// it is quick and the grid needs it (thumbnails), while previews are slow and only a long-press
+// needs them. A failing database is logged and retried after Idle, like an empty queue.
 func (e *Extractor) Run(ctx context.Context) {
 	log.Printf("extractor: started, %d workers", e.workers())
 	for {
 		n, err := e.Round(ctx)
+		if err == nil && n == 0 && ctx.Err() == nil {
+			n, err = e.PreviewRound(ctx)
+		}
 		if ctx.Err() != nil {
 			log.Printf("extractor: stopped")
 			return
@@ -121,10 +148,27 @@ func (e *Extractor) Round(ctx context.Context) (int, error) {
 	if err != nil || len(pending) == 0 {
 		return 0, err
 	}
+	return e.pool(ctx, "extract", pending, e.one)
+}
 
+// PreviewRound makes previews for up to previewsPerWorker × Workers videos, Workers at a time,
+// and returns how many it tried. It makes none without a PreviewDir.
+func (e *Extractor) PreviewRound(ctx context.Context) (int, error) {
+	if e.PreviewDir == "" || e.Preview == nil {
+		return 0, nil
+	}
+	pending, err := e.Store.PendingPreviews(ctx, previewsPerWorker*e.workers())
+	if err != nil || len(pending) == 0 {
+		return 0, err
+	}
+	return e.pool(ctx, "preview", pending, e.onePreview)
+}
+
+// pool runs fn on every video in pending, Workers at a time, reported as a job called name.
+func (e *Extractor) pool(ctx context.Context, name string, pending []media.Media, fn func(context.Context, media.Media) error) (int, error) {
 	var task *jobs.Task
 	if e.Jobs != nil {
-		task = e.Jobs.Start("extract")
+		task = e.Jobs.Start(name)
 		task.SetTotal(int64(len(pending)))
 	}
 	start := time.Now()
@@ -133,10 +177,19 @@ func (e *Extractor) Round(ctx context.Context) (int, error) {
 	var wg sync.WaitGroup
 	var dbErr error
 	var errOnce sync.Once
+	// started counts videos a worker began while ctx was live. Not the producer's sends: once ctx
+	// is cancelled, a worker freed by its killed ffmpeg and ctx.Done can be ready at the same
+	// moment, and select picks between them at random, so one more send can slip through. That
+	// video is skipped here, not started, and not counted.
+	var started atomic.Int64
 	for range e.workers() {
 		wg.Go(func() {
 			for m := range videos { // ends when the producer closes videos
-				if err := e.one(ctx, m); err != nil {
+				if ctx.Err() != nil {
+					continue // handed out after shutdown began: drain, don't start
+				}
+				started.Add(1)
+				if err := fn(ctx, m); err != nil {
 					errOnce.Do(func() { dbErr = err }) // the first database error; the round goes on
 				}
 				if task != nil {
@@ -146,20 +199,19 @@ func (e *Extractor) Round(ctx context.Context) (int, error) {
 		})
 	}
 
-	sent := 0
 send:
 	for _, m := range pending {
 		select {
 		case videos <- m: // blocks until a worker is free: this is the backpressure
-			sent++
 		case <-ctx.Done(): // shutting down: hand out no more
 			break send
 		}
 	}
 	close(videos) // no more work: each worker's range loop ends once it finishes its current video
 	wg.Wait()
+	sent := int(started.Load())
 
-	err = dbErr
+	err := dbErr
 	if ctx.Err() != nil {
 		err = ctx.Err()
 	}
@@ -169,9 +221,9 @@ send:
 	took := time.Since(start).Round(time.Millisecond)
 	if ctx.Err() != nil {
 		// The ones in flight were stopped, not failed: they're still pending and run next time.
-		log.Printf("extractor: round stopped by shutdown after %s; %d videos handed out, unfinished ones stay pending", took, sent)
+		log.Printf("extractor: %s round stopped by shutdown after %s; %d videos handed out, unfinished ones stay pending", name, took, sent)
 	} else {
-		log.Printf("extractor: round of %d videos with %d workers in %s", sent, e.workers(), took)
+		log.Printf("extractor: %s round of %d videos with %d workers in %s", name, sent, e.workers(), took)
 	}
 	return sent, err
 }
@@ -213,4 +265,31 @@ func (e *Extractor) extract(ctx context.Context, m media.Media) (media.VideoMeta
 		return v, fmt.Errorf("thumbnail: %w", err)
 	}
 	return v, nil
+}
+
+// onePreview makes m's preview. Like one, it returns only database errors.
+func (e *Extractor) onePreview(ctx context.Context, m media.Media) error {
+	if m.Video == nil {
+		return e.Store.RecordPreviewFailure(ctx, m.ID, "no duration")
+	}
+	start := time.Now()
+	path := filepath.Join(e.MediaDir, filepath.FromSlash(m.RelPath))
+	err := os.MkdirAll(e.PreviewDir, 0o755)
+	if err == nil {
+		err = e.Preview(ctx, path, PreviewPath(e.PreviewDir, m.ID), m.Video.DurationMs)
+	}
+	if ctx.Err() != nil {
+		return nil // shutting down: not the file's fault
+	}
+	if err != nil {
+		log.Printf("extractor: preview %s (%s) failed: %v", m.ID, m.Title, err)
+		return e.Store.RecordPreviewFailure(ctx, m.ID, err.Error())
+	}
+	// The ModTime the preview was made from, read before it was made: if the file changed while
+	// ffmpeg ran, the preview is already stale and is made again.
+	if err := e.Store.SetPreview(ctx, m.ID, m.ModTime); err != nil {
+		return err
+	}
+	log.Printf("extractor: preview %s (%s) in %s", m.ID, m.Title, time.Since(start).Round(time.Millisecond))
+	return nil
 }
