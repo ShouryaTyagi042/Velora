@@ -59,7 +59,7 @@ select m.id, m.fingerprint, m.kind, m.title, m.rel_path, coalesce(m.series, ''),
                  where mt.media_id = m.id), '[]'),
        exists (select 1 from favourites f where f.user_id = $1 and f.media_id = m.id),
        m.in_bin, m.binned_at,
-       (select count(*) from media_views v where v.media_id = m.id)
+       (select count(*) from media_views v where v.media_id = m.id), coalesce(m.source_url, '')
 from media m
 left join comic_metadata cm on cm.media_id = m.id
 left join video_metadata vm on vm.media_id = m.id
@@ -219,7 +219,7 @@ func (r *MediaRepo) scanMedia(row interface{ Scan(...any) error }) (media.Media,
 		&m.ModTime, &m.AddedAt, &pageCount, r.types.SQLScanner(&pages),
 		&extracted, &v.DurationMs, &v.Width, &v.Height, &v.Codec, &v.FPS, &v.Preview, &v.Short,
 		&saved, &p.PositionMs, &p.DurationMs, &p.Page, &p.PageCount, &p.Completed, &actors,
-		&tags, &m.Favourite, &m.InBin, &binnedAt, &m.Views)
+		&tags, &m.Favourite, &m.InBin, &binnedAt, &m.Views, &m.SourceURL)
 	if err != nil {
 		return media.Media{}, err
 	}

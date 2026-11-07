@@ -13,7 +13,7 @@ import { CoverCard } from "@/components/CoverCard";
 import { EmptyView } from "@/components/EmptyView";
 import { ErrorView } from "@/components/ErrorView";
 import { Gradient } from "@/components/Gradient";
-import { MediaCard } from "@/components/MediaCard";
+import { MediaCard, videoRailWidth } from "@/components/MediaCard";
 import { Poster } from "@/components/Poster";
 import { Rail } from "@/components/Rail";
 import { Skeleton } from "@/components/Skeleton";
@@ -27,8 +27,6 @@ import { resumeAt } from "@/progress/resume";
 import { gradients, onMedia, space, typography, useAppTheme, wordmark } from "@/theme";
 
 const RECENT = 12;
-const RAIL_CARD = 168; // a 16:9 still in a rail
-const RAIL_COVER = 112; // a 2:3 comic cover is tall, so it gets a narrower card
 const RAIL_GROUP = 200; // an actor's or a series' tile
 // The billboard is a little taller than wide: a poster's proportions, cropped from a 16:9 still.
 const BILLBOARD_TALL = 1.18;
@@ -55,7 +53,7 @@ const fetchHome = async (signal: AbortSignal) => {
     getContinue({ signal }),
     listActors({ section: Section.Movies, signal }),
     listSeries({ signal }),
-    listMedia({ favourites: true, sort: "recent", limit: RECENT, signal }),
+    listMedia({ kind: MediaKind.Video, favourites: true, sort: "recent", limit: RECENT, signal }), // films and anime; comics have their own rails
   ]);
   return {
     favourites: favourites.items,
@@ -74,10 +72,10 @@ const play = (m: Media) =>
 const details = (m: Media) => router.push({ pathname: "/media/[id]", params: { id: m.id } });
 
 // The rails' cards. Defined outside the component: the same functions every render.
-const still = (m: Media) => <MediaCard media={m} onPress={openMedia} style={styles.card} />;
-const resume = (m: Media) => <MediaCard media={m} onPress={play} style={m.kind === MediaKind.Comic ? styles.cover : styles.card} />;
-const cover = (m: Media) => <MediaCard media={m} onPress={openMedia} style={styles.cover} />;
-const favourite = (m: Media) => <MediaCard media={m} onPress={openMedia} style={m.kind === MediaKind.Comic ? styles.cover : styles.card} />;
+const still = (m: Media) => <MediaCard media={m} onPress={openMedia} />;
+const resume = (m: Media) => <MediaCard media={m} onPress={play} />;
+const cover = (m: Media) => <MediaCard media={m} onPress={openMedia} />;
+const favourite = (m: Media) => <MediaCard media={m} onPress={openMedia} />;
 const actor = (a: ActorCount) => (
   <CoverCard
     layout="tile"
@@ -279,7 +277,7 @@ function HomeSkeleton() {
         <Skeleton width={160} height={22} />
         <View style={styles.skeletonRow}>
           {[0, 1, 2].map((i) => (
-            <Skeleton key={i} width={RAIL_CARD} aspectRatio={16 / 9} />
+            <Skeleton key={i} width={videoRailWidth(width)} aspectRatio={16 / 9} />
           ))}
         </View>
       </View>
@@ -302,8 +300,6 @@ const styles = StyleSheet.create({
   billboardActions: { flexDirection: "row", gap: space.sm, marginTop: space.sm, alignSelf: "stretch" },
   billboardButton: { flex: 1 },
   rails: { gap: space.xl + space.xs, marginTop: space.xl },
-  card: { width: RAIL_CARD },
-  cover: { width: RAIL_COVER },
   group: { width: RAIL_GROUP },
   skeletonRail: { paddingHorizontal: space.lg, gap: space.md },
   skeletonRow: { flexDirection: "row", gap: space.sm },

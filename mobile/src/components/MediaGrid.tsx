@@ -53,7 +53,7 @@ export function MediaGrid({
       keyExtractor={(m) => m.id}
       renderItem={({ item }) => (
         <View style={[styles.cell, cell]}>
-          <MediaCard media={item} onPress={openMedia} showKind={false} />
+          <MediaCard media={item} onPress={openMedia} showKind={false} style={styles.fill} />
         </View>
       )}
       numColumns={columns}
@@ -93,6 +93,7 @@ export function MediaGrid({
 const styles = StyleSheet.create({
   grid: { paddingHorizontal: space.sm, paddingBottom: space.xl, flexGrow: 1 },
   cell: { padding: space.sm - 2 },
+  fill: { width: "100%" }, // the cell sets the width, not the rail default
   skeletons: { flexDirection: "row", flexWrap: "wrap" },
   skeletonTitle: { marginTop: space.sm },
   footer: { margin: space.lg },

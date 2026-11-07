@@ -65,6 +65,7 @@ export type Media = {
   views: number; // times watched (videos) or read to the last page (comics), by anyone
   inBin?: boolean; // moved to the bin: hidden everywhere but the bin until restored or deleted
   binnedAt?: string; // RFC 3339, while in the bin
+  sourceUrl?: string; // the web page it was downloaded from, when known
 };
 
 export type ListOptions = {

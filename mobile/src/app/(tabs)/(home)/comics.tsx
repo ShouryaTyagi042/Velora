@@ -9,7 +9,7 @@ import { usePages } from "@/hooks/usePages";
 import { useRefetchOnLibraryChange } from "@/hooks/useLibraryChanges";
 import { useRescan } from "@/hooks/useRescan";
 
-// Comics: every comic as a cover, three across like a shelf (four on a tablet). Covers are 2:3,
+// Comics: every comic as a cover, two across, big enough to read the cover (three on a tablet). Covers are 2:3,
 // so more fit in a row than video posters do. A to Z by default; the header button flips it.
 // The order lives in the route (/comics?order=desc) like the Videos actor filter, so it survives
 // leaving and coming back. The server sorts (the list is paged), so a flip starts the list again.
@@ -38,7 +38,7 @@ export default function Comics() {
       />
       <MediaGrid
         state={state}
-        columns={width >= 600 ? 4 : 3}
+        columns={width >= 600 ? 3 : 2}
         aspectRatio={2 / 3}
         refreshing={scanning || refreshing}
         onRefresh={rescan}

@@ -54,3 +54,12 @@ export function formatViews(n: number): string {
   const k = n / 1000;
   return `${k < 10 ? k.toFixed(1).replace(/\.0$/, "") : Math.round(k)}K views`;
 }
+
+// formatRuntime is a length the way a listing says it: "1h 42m", "24m", "45s".
+export function formatRuntime(seconds: number): string {
+  const total = Number.isFinite(seconds) ? Math.max(0, Math.round(seconds)) : 0;
+  if (total < 60) return `${total}s`;
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}

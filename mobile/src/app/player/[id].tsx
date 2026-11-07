@@ -19,8 +19,9 @@ import { onMedia, space, typography, useAppTheme } from "@/theme";
 
 // The player screen fetches the media first: a bad id becomes a "Not found" from the API
 // instead of a stream the native player can't explain. It also says where to resume.
+// ?from=start plays from the beginning whatever the saved position (Details' Start over).
 export default function PlayerScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, from } = useLocalSearchParams<{ id: string; from?: string }>();
   const fetcher = useCallback(
     (signal: AbortSignal) => loadWithProgress(id, signal),
     [id],
@@ -36,10 +37,10 @@ export default function PlayerScreen() {
         error={new PlaybackError(`${state.data.title} is not a video.`)}
       />
     );
-  return <Player media={state.data} />;
+  return <Player media={state.data} fromStart={from === "start"} />;
 }
 
-function Player({ media }: { media: Media }) {
+function Player({ media, fromStart }: { media: Media; fromStart: boolean }) {
   // The native player makes its own requests, so it gets the session header explicitly.
   const source = { uri: streamUrl(media.id), headers: authHeaders(), metadata: { title: media.title } };
 
@@ -49,7 +50,7 @@ function Player({ media }: { media: Media }) {
   // staysActiveInBackground false the player pauses when the app is backgrounded.
   const player = useVideoPlayer(source, (p) => {
     p.timeUpdateEventInterval = 0.5; // 0 means no timeUpdate events at all
-    p.currentTime = resumeAt(media); // seek before play, so the start isn't heard first
+    p.currentTime = fromStart ? 0 : resumeAt(media); // seek before play, so the start isn't heard first
     p.play();
   });
   const s = usePlayerStatus(player);

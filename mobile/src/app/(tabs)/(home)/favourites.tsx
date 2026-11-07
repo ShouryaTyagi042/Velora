@@ -24,7 +24,7 @@ const EMPTY = {
 } as const;
 
 // Favourites: what you've hearted, cut by type (?type=videos|anime|comics). Videos and anime are
-// one per row, like every list of videos; comics are covers, three across; All shows your comics
+// one per row, like every list of videos; comics are covers, two across; All shows your comics
 // as a row of covers over your videos.
 export default function Favourites() {
   const type = parseMediaType(useLocalSearchParams<{ type?: string }>().type);
@@ -33,7 +33,7 @@ export default function Favourites() {
 
 const fetchComicRail = async (signal: AbortSignal) =>
   (await listMedia({ kind: MediaKind.Comic, favourites: true, limit: 50, signal })).items;
-const cover = (m: Media) => <MediaCard media={m} onPress={openMedia} style={styles.cover} />;
+const cover = (m: Media) => <MediaCard media={m} onPress={openMedia} />;
 
 function FavouriteVideos({ type }: { type: Exclude<MediaType, "comics"> }) {
   const all = type === "all";
@@ -75,7 +75,7 @@ function FavouriteComics() {
   return (
     <MediaGrid
       state={state}
-      columns={width >= 600 ? 4 : 3}
+      columns={width >= 600 ? 3 : 2}
       aspectRatio={2 / 3}
       refreshing={scanning || refreshing}
       onRefresh={rescan}
@@ -97,6 +97,5 @@ const styles = StyleSheet.create({
   header: { gap: space.lg, marginBottom: space.lg },
   // The rail draws its own side padding; the list's would double it.
   rail: { marginHorizontal: -space.lg },
-  cover: { width: 112 },
   gridHeader: { paddingBottom: space.md },
 });

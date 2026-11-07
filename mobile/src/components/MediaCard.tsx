@@ -1,5 +1,5 @@
 import * as Haptics from "expo-haptics";
-import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from "react-native";
+import { Pressable, StyleSheet, useWindowDimensions, View, type StyleProp, type ViewStyle } from "react-native";
 
 import { MediaKind, Section, type Media, type Progress } from "@/api/media";
 import { formatDuration, formatResolution, formatViews } from "@/lib/format";
@@ -36,6 +36,7 @@ export function MediaCard({ media, onPress, layout = "rail", showKind = false, s
   const previewing = useIsPreviewing(media.id);
   const done = media.progress && !media.progress.completed ? fraction(media.progress) : null;
   const wide = layout === "wide";
+  const { width: screen } = useWindowDimensions();
   const preview = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); // the press was felt: it's intentional
     startPreview(media);
@@ -50,7 +51,7 @@ export function MediaCard({ media, onPress, layout = "rail", showKind = false, s
       accessibilityLabel={describe(media, done)}
       accessibilityActions={canPreview ? [{ name: "longpress", label: "Preview" }] : undefined}
       onAccessibilityAction={(e) => e.nativeEvent.actionName === "longpress" && canPreview && preview()}
-      style={({ pressed }) => [wide ? styles.wide : styles.rail, style, pressed && styles.pressed]}
+      style={({ pressed }) => [wide ? styles.wide : styles.rail, !wide && { width: isVideo ? videoRailWidth(screen) : comicRailWidth(screen) }, style, pressed && styles.pressed]}
     >
       <Poster media={media} style={wide && styles.wideArt}>
         {previewing && (isVideo ? <PreviewVideo id={media.id} /> : <ComicPreview comic={media} />)}
@@ -100,6 +101,18 @@ function Kind({ media }: { media: Media }) {
       {label}
     </Text>
   );
+}
+
+// videoRailWidth is a video card's width in a rail: about one and a half to a screen, so the
+// still is big enough to read and the half card says there's more to the right. Capped for iPad.
+export function videoRailWidth(screen: number): number {
+  return Math.round((Math.min(screen, 720) - space.lg) / 1.5);
+}
+
+// comicRailWidth is a comic cover's width in a rail: two to a screen, with a sliver of the third
+// showing there's more. Covers are tall (2:3), so two fit where a video and a half do.
+export function comicRailWidth(screen: number): number {
+  return Math.round((Math.min(screen, 720) - space.lg) / 2.2);
 }
 
 // PREVIEW_DELAY is how long a press must last to start a preview, in ms.

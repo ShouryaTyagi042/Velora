@@ -389,6 +389,9 @@ func TestSourceURLs(t *testing.T) {
 	if err := db.QueryRow(`select source_url from media where id = $1`, id).Scan(&got); err != nil || got != urls[id] {
 		t.Errorf("after a rescan source_url = %q, %v; want %q", got, err, urls[id])
 	}
+	if m, err := repo.Get(ctx, 1, id); err != nil || m.SourceURL != urls[id] {
+		t.Errorf("Get().SourceURL = %q, %v; want %q", m.SourceURL, err, urls[id])
+	}
 	if _, err := repo.SetSourceURLs(ctx, map[string]string{id: "ftp://nope"}); err == nil {
 		t.Error("a non-web URL was accepted")
 	}

@@ -132,6 +132,7 @@ type Media struct {
 	Views       int        `json:"views"`               // times watched (videos) or read to the end (comics), by anyone
 	InBin       bool       `json:"inBin,omitempty"`     // moved to the bin: hidden everywhere but the bin
 	BinnedAt    *time.Time `json:"binnedAt,omitempty"`
+	SourceURL   string     `json:"sourceUrl,omitempty"` // the web page it was downloaded from, when known
 }
 
 // HasActor reports whether any of m's actors is called name.

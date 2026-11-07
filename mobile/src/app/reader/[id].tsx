@@ -21,8 +21,9 @@ import { onMedia, space, touch, typography } from "@/theme";
 
 const FG = onMedia.text; // controls sit over pages on a black background
 
+// ?from=start opens on the first page whatever the saved one (Details' Start over).
 export default function ReaderScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, from } = useLocalSearchParams<{ id: string; from?: string }>();
   const fetcher = useCallback((signal: AbortSignal) => loadWithProgress(id, signal), [id]);
   const { state, refetch } = useAsync(fetcher);
 
@@ -31,17 +32,17 @@ export default function ReaderScreen() {
   if (state.data.kind !== MediaKind.Comic || !state.data.comic) {
     return <ErrorView error={new ApiError(404, "not_found", `${state.data.title} is not a comic.`)} />;
   }
-  return <Reader comic={state.data} pageCount={state.data.comic.pageCount} />;
+  return <Reader comic={state.data} pageCount={state.data.comic.pageCount} fromStart={from === "start"} />;
 }
 
-function Reader({ comic, pageCount }: { comic: Media; pageCount: number }) {
+function Reader({ comic, pageCount, fromStart }: { comic: Media; pageCount: number; fromStart: boolean }) {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const reduceMotion = useReducedMotion();
   const { direction, setDirection } = useReaderSettings();
   const horizontal = direction === "horizontal";
 
-  const [page, setPage] = useState(() => resumePage(comic));
+  const [page, setPage] = useState(() => (fromStart ? 0 : resumePage(comic)));
   const view = useViewOnce(comic.id);
   const sync = useProgressSync(comic.id);
   const [chrome, setChrome] = useState(true); // the top and bottom bars
