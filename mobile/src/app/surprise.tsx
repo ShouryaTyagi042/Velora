@@ -1,16 +1,14 @@
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
 import { Image } from "expo-image";
-import { useVideoPlayer, VideoView, type VideoPlayer } from "expo-video";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { ScrollView, StyleSheet, View } from "react-native";
 
 import { authHeaders } from "@/api/client";
-import { MediaKind, pageUrl, previewUrl, randomMedia, Section, shortUrl, type Media } from "@/api/media";
+import { MediaKind, pageUrl, randomMedia, Section, type Media } from "@/api/media";
 import { Button } from "@/components/Button";
 import { Chip } from "@/components/Chip";
 import { EmptyView } from "@/components/EmptyView";
-import { Icon } from "@/components/Icon";
 import { ErrorView } from "@/components/ErrorView";
 import { detailLine } from "@/components/MediaCard";
 import { Poster } from "@/components/Poster";
@@ -19,8 +17,9 @@ import { Text } from "@/components/Text";
 import { useAsync } from "@/hooks/useAsync";
 import { formatDuration } from "@/lib/format";
 import { latePages } from "@/lib/pages";
+import { VideoTeaser } from "@/preview/LoopingClip";
 import { resumeAt, resumePage } from "@/progress/resume";
-import { motion, onMedia, radius, space, touch, useAppTheme } from "@/theme";
+import { motion, onMedia, radius, space, useAppTheme } from "@/theme";
 
 type SurpriseKind = "any" | "film" | "anime" | "comic";
 
@@ -130,67 +129,6 @@ function Reveal({ media, onShuffle }: { media: Media; onShuffle: () => void }) {
   );
 }
 
-// VideoTeaser plays the pick's clip over its still as soon as the sheet shows it: the Shorts clip
-// if the server has made one, else the long-press preview; looping, muted until you tap the
-// speaker. The still stays until the clip's first frame is drawn. Nothing for a video with neither.
-function VideoTeaser({ media }: { media: Media }) {
-  // Only the Shorts clip has a soundtrack: the long-press preview is cut silent.
-  if (media.video?.short) return <LoopingClip uri={shortUrl(media)} hasSound />;
-  if (media.video?.preview) return <LoopingClip uri={previewUrl(media)} hasSound={false} />;
-  return null;
-}
-
-// Sound on or off is remembered while the app runs: the next pick, or the next time the sheet
-// opens, sounds the way you left it.
-let soundOn = false;
-
-// The player is a native object: setting its properties is a command, not a React mutation.
-function applySound(p: VideoPlayer, on: boolean) {
-  p.muted = !on;
-  // Silent, it mixes with music playing elsewhere; with sound, it takes the audio like any video.
-  p.audioMixingMode = on ? "auto" : "mixWithOthers";
-}
-
-function LoopingClip({ uri, hasSound }: { uri: string; hasSound: boolean }) {
-  const source = useMemo(() => ({ uri, headers: authHeaders() }), [uri]);
-  const player = useVideoPlayer(source, (p) => {
-    p.loop = true;
-    applySound(p, hasSound && soundOn);
-    p.play();
-  });
-  const [drawn, setDrawn] = useState(false);
-  const [sound, setSound] = useState(hasSound && soundOn);
-  const toggle = () => {
-    soundOn = !sound;
-    applySound(player, soundOn);
-    setSound(soundOn);
-  };
-  return (
-    <>
-      <VideoView
-        player={player}
-        style={[StyleSheet.absoluteFill, { opacity: drawn ? 1 : 0 }]}
-        contentFit="cover"
-        nativeControls={false}
-        allowsPictureInPicture={false}
-        onFirstFrameRender={() => setDrawn(true)}
-        pointerEvents="none"
-      />
-      {hasSound && (
-        <Pressable
-          onPress={toggle}
-          hitSlop={8}
-          accessibilityRole="button"
-          accessibilityLabel={sound ? "Turn sound off" : "Turn sound on"}
-          style={({ pressed }) => [styles.sound, pressed && styles.soundPressed]}
-        >
-          <Icon sf={sound ? "speaker.wave.2.fill" : "speaker.slash.fill"} md={sound ? "volume_up" : "volume_off"} size={16} color={onMedia.text} />
-        </Pressable>
-      )}
-    </>
-  );
-}
-
 // PageFlip turns a comic's late pages (from past 60%) over its cover, one after another, round
 // and round, while the sheet is open: the comic's own preview.
 const FLIP_PAGES = 8;
@@ -226,16 +164,4 @@ const styles = StyleSheet.create({
   text: { gap: space.xs },
   row: { flexDirection: "row", gap: space.sm },
   half: { flex: 1 },
-  sound: {
-    position: "absolute",
-    right: space.sm,
-    bottom: space.sm,
-    width: touch.min - 6,
-    height: touch.min - 6,
-    borderRadius: radius.pill,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: onMedia.scrim,
-  },
-  soundPressed: { opacity: 0.6 },
 });

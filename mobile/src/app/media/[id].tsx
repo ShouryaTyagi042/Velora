@@ -1,4 +1,4 @@
-import { router, Stack, useLocalSearchParams } from "expo-router";
+import { router, Stack, useIsFocused, useLocalSearchParams } from "expo-router";
 import { useCallback, useRef, useState, type ComponentRef } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
 
@@ -35,6 +35,7 @@ import { useAsync } from "@/hooks/useAsync";
 import { libraryChanged } from "@/hooks/useLibraryChanges";
 import { formatBytes, formatDate, formatDuration, formatResolution, formatViews } from "@/lib/format";
 import { openMedia } from "@/navigation/openMedia";
+import { VideoTeaser } from "@/preview/LoopingClip";
 import { resumeAt, resumePage } from "@/progress/resume";
 import { gradients, onMedia, radius, space, touch, typography, useAppTheme } from "@/theme";
 
@@ -70,6 +71,7 @@ function MediaDetails({ media: initial, related }: { media: Media; related: Medi
   // The screen's own copy: adding or removing an actor replaces it with the server's answer.
   const [media, setMedia] = useState(initial);
   const isVideo = media.kind === MediaKind.Video;
+  const focused = useIsFocused();
   const actors = media.actors ?? []; // omitted from the JSON when there are none
   const open = () => router.push({ pathname: isVideo ? "/player/[id]" : "/reader/[id]", params: { id: media.id } });
 
@@ -127,9 +129,11 @@ function MediaDetails({ media: initial, related }: { media: Media; related: Medi
     <ScrollView ref={scroll} contentInsetAdjustmentBehavior="never" contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       <Stack.Screen options={{ title: "" }} />
 
-      {/* The still, edge to edge under the transparent header, is a second Play button. */}
+      {/* The still, edge to edge under the transparent header, is a second Play button. A video's
+          clip plays over it while this page is on top; opening the player stops it. */}
       <Pressable onPress={open} accessibilityRole="button" accessibilityLabel={`${action}: ${media.title}`}>
         <Poster media={media} style={styles.hero} aspectRatio={isVideo ? 16 / 10 : 4 / 5}>
+          {isVideo && focused && <VideoTeaser media={media} soundStyle={styles.heroSound} />}
           <Gradient colors={gradients.top} style={styles.heroTop} />
           <Gradient colors={gradients.billboard} style={styles.heroFade} />
           <View style={[styles.playBadge, { backgroundColor: onMedia.scrim }]}>
@@ -419,6 +423,8 @@ const styles = StyleSheet.create({
   hero: { borderRadius: 0, width: "100%" },
   heroTop: { bottom: "70%" },
   heroFade: { top: "40%" },
+  // Above the title block, which overlaps the hero's bottom edge.
+  heroSound: { bottom: space.xxl + space.sm, right: space.lg },
   playBadge: { position: "absolute", width: 60, height: 60, borderRadius: 30, alignItems: "center", justifyContent: "center" },
   body: { paddingHorizontal: space.lg, gap: space.xl, marginTop: -space.xxl },
   heading: { gap: space.xs + 2 },
