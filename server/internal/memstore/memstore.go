@@ -8,6 +8,7 @@ package memstore
 import (
 	"cmp"
 	"context"
+	"math/rand/v2"
 	"slices"
 	"strings"
 	"sync"
@@ -113,7 +114,11 @@ func (s *Store) List(ctx context.Context, user int64, f media.ListFilter) ([]med
 	}
 	s.mu.RUnlock()
 
-	slices.SortFunc(out, order)
+	if f.Sort == media.SortRandom {
+		rand.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
+	} else {
+		slices.SortFunc(out, order)
+	}
 	if f.Limit > 0 && len(out) > f.Limit {
 		out = out[:f.Limit]
 	}
@@ -202,19 +207,23 @@ func (s *Store) Continue(ctx context.Context, user int64, kind media.Kind, limit
 func (s *Store) ListActors(ctx context.Context, section media.Section) ([]media.ActorCount, error) {
 	s.mu.RLock()
 	counts := map[string]int{}
+	covers := map[string]media.Media{} // the newest video with a thumbnail, as in Postgres
 	for _, e := range s.items {
 		if e.missing || e.m.Kind != media.KindVideo || (section != "" && e.m.Section != section) {
 			continue
 		}
 		for _, a := range e.m.Actors {
 			counts[a.Name]++
+			if c, ok := covers[a.Name]; e.m.Video != nil && (!ok || byRecent(e.m, c) < 0) {
+				covers[a.Name] = e.m
+			}
 		}
 	}
 	s.mu.RUnlock()
 
 	out := make([]media.ActorCount, 0, len(counts))
 	for name, n := range counts {
-		out = append(out, media.ActorCount{Name: name, VideoCount: n})
+		out = append(out, media.ActorCount{Name: name, VideoCount: n, Cover: coverOf(covers, name)})
 	}
 	slices.SortFunc(out, func(a, b media.ActorCount) int { return strings.Compare(a.Name, b.Name) })
 	return out, nil
@@ -224,21 +233,34 @@ func (s *Store) ListActors(ctx context.Context, section media.Section) ([]media.
 func (s *Store) ListSeries(ctx context.Context) ([]media.SeriesCount, error) {
 	s.mu.RLock()
 	counts := map[string]int{}
+	covers := map[string]media.Media{} // the first episode by title with a thumbnail
 	for _, e := range s.items {
 		if !e.missing && e.m.Series != "" {
 			counts[e.m.Series]++
+			if c, ok := covers[e.m.Series]; e.m.Video != nil && (!ok || byTitle(e.m, c) < 0) {
+				covers[e.m.Series] = e.m
+			}
 		}
 	}
 	s.mu.RUnlock()
 
 	out := make([]media.SeriesCount, 0, len(counts))
 	for name, n := range counts {
-		out = append(out, media.SeriesCount{Name: name, EpisodeCount: n})
+		out = append(out, media.SeriesCount{Name: name, EpisodeCount: n, Cover: coverOf(covers, name)})
 	}
 	slices.SortFunc(out, func(a, b media.SeriesCount) int {
 		return cmp.Or(strings.Compare(media.TitleKey(a.Name), media.TitleKey(b.Name)), strings.Compare(a.Name, b.Name))
 	})
 	return out, nil
+}
+
+// coverOf is the cover chosen for name, or nil when none of its videos has a thumbnail.
+func coverOf(covers map[string]media.Media, name string) *media.Cover {
+	m, ok := covers[name]
+	if !ok {
+		return nil
+	}
+	return &media.Cover{ID: m.ID, ModTime: m.ModTime}
 }
 
 // AddActor implements media.Repository.

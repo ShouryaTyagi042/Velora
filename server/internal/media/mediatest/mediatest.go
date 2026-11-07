@@ -303,6 +303,19 @@ func Run(t *testing.T, open func(t *testing.T) Store) {
 		}
 	})
 
+	t.Run("random order is a shuffle of the matches", func(t *testing.T) {
+		s := seeded(t)
+		all := list(t, s, media.ListFilter{Kind: media.KindVideo, Sort: media.SortRandom})
+		got := titles(all)
+		slices.Sort(got)
+		if want := []string{"Interstellar", "John Wick", "Loose Clip", "The Matrix"}; !slices.Equal(got, want) {
+			t.Errorf("random videos = %v, want each video once: %v", got, want)
+		}
+		if two := list(t, s, media.ListFilter{Sort: media.SortRandom, Limit: 2}); len(two) != 2 || two[0].ID == two[1].ID {
+			t.Errorf("random, limit 2 = %v, want two different items", titles(two))
+		}
+	})
+
 	t.Run("titles sort naturally", func(t *testing.T) {
 		s := open(t)
 		var lib []media.Media

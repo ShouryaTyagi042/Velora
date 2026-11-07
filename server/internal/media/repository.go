@@ -71,21 +71,35 @@ const (
 	SortTitle     Sort = ""           // by title, natural and case-insensitive (TitleKey), then id
 	SortTitleDesc Sort = "title_desc" // SortTitle reversed: Z to A, then id descending
 	SortRecent    Sort = "recent"     // newest AddedAt first, then id descending
+	// SortRandom is a fresh shuffle on every call (Surprise me, Shorts). It has no next page: a
+	// cursor can't continue a shuffle, so callers ask again for more.
+	SortRandom Sort = "random"
 )
 
 // Valid reports whether s is a known order.
-func (s Sort) Valid() bool { return s == SortTitle || s == SortTitleDesc || s == SortRecent }
+func (s Sort) Valid() bool {
+	return s == SortTitle || s == SortTitleDesc || s == SortRecent || s == SortRandom
+}
 
 // ActorCount is one row of GET /api/actors.
 type ActorCount struct {
 	Name       string `json:"name"`
 	VideoCount int    `json:"videoCount"`
+	Cover      *Cover `json:"cover,omitempty"` // their newest video with a thumbnail; nil while none has one
 }
 
 // SeriesCount is one row of GET /api/series.
 type SeriesCount struct {
 	Name         string `json:"name"`
 	EpisodeCount int    `json:"episodeCount"`
+	Cover        *Cover `json:"cover,omitempty"` // its first episode (natural order) with a thumbnail
+}
+
+// Cover names the video whose thumbnail stands for an actor or a series. ModTime versions the
+// thumbnail URL exactly as it does for the video itself.
+type Cover struct {
+	ID      string    `json:"id"`
+	ModTime time.Time `json:"modTime"`
 }
 
 // SyncResult says what one Sync changed.

@@ -187,6 +187,54 @@ func TestExtractorQueue(t *testing.T) {
 	}
 }
 
+// TestCovers checks that an actor's and a series' cover is a video with a thumbnail: the newest
+// of an actor's, the first of a series' in natural order.
+func TestCovers(t *testing.T) {
+	repo := NewMediaRepo(emptyDB(t))
+	ctx := context.Background()
+	lib := append(mediatest.Library(),
+		media.Media{Fingerprint: "fp:e1", Kind: media.KindVideo, Title: "Episode 1", RelPath: "anime/Trigun/Episode 1.mkv", MimeType: "video/x-matroska", ModTime: time.Now()},
+		media.Media{Fingerprint: "fp:e10", Kind: media.KindVideo, Title: "Episode 10", RelPath: "anime/Trigun/Episode 10.mkv", MimeType: "video/x-matroska", ModTime: time.Now()},
+		media.Media{Fingerprint: "fp:e2", Kind: media.KindVideo, Title: "Episode 2", RelPath: "anime/Trigun/Episode 2.mkv", MimeType: "video/x-matroska", ModTime: time.Now()})
+	if _, err := repo.Sync(ctx, lib, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	all, err := repo.List(ctx, 0, media.ListFilter{Kind: media.KindVideo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := map[string]string{}
+	for _, m := range all {
+		id[m.Title] = m.ID
+	}
+	meta := media.VideoMeta{DurationMs: 1000, Width: 1920, Height: 1080, Codec: "h264", FPS: 24}
+	for _, title := range []string{"John Wick", "Episode 10", "Episode 2"} {
+		if err := repo.SetVideoMeta(ctx, id[title], meta); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	actors, err := repo.ListActors(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range actors {
+		switch {
+		case a.Name == "Keanu Reeves" && (a.Cover == nil || a.Cover.ID != id["John Wick"]):
+			t.Errorf("Keanu Reeves cover = %+v, want John Wick, the one with a thumbnail", a.Cover)
+		case a.Name == "Matthew McConaughey" && a.Cover != nil:
+			t.Errorf("Matthew McConaughey cover = %+v, want none: no thumbnail yet", a.Cover)
+		}
+	}
+	series, err := repo.ListSeries(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(series) != 1 || series[0].Cover == nil || series[0].Cover.ID != id["Episode 2"] {
+		t.Errorf("ListSeries = %+v, want Trigun covered by Episode 2 (2 before 10; 1 has no thumbnail)", series)
+	}
+}
+
 // TestTitleKeyMatchesGo checks velora_title_key against its Go twin, media.TitleKey: memstore
 // sorts by one and Postgres by the other, and the shared suite assumes they agree.
 func TestTitleKeyMatchesGo(t *testing.T) {
@@ -310,5 +358,38 @@ func TestSeriesColumn(t *testing.T) {
 	db.QueryRow(`select series from media where title = 'Session 1'`).Scan(&series)
 	if series != "Bebop" {
 		t.Errorf("series after the path changed = %q, want Bebop", series)
+	}
+}
+
+// TestSourceURLs: an import stores the page, a second identical import changes nothing, and a
+// rescan (which upserts only the columns the scanner knows) keeps it.
+func TestSourceURLs(t *testing.T) {
+	db := emptyDB(t)
+	repo := NewMediaRepo(db)
+	ctx := context.Background()
+	if _, err := repo.Sync(ctx, mediatest.Library(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	locs, err := repo.Locations(ctx)
+	if err != nil || len(locs) != 5 {
+		t.Fatalf("Locations = %d items, %v; want 5", len(locs), err)
+	}
+	id := locs[0].ID
+	urls := map[string]string{id: "https://example.com/watch/1"}
+	if n, err := repo.SetSourceURLs(ctx, urls); err != nil || n != 1 {
+		t.Fatalf("first import changed %d, %v; want 1", n, err)
+	}
+	if n, err := repo.SetSourceURLs(ctx, urls); err != nil || n != 0 {
+		t.Errorf("same import again changed %d, %v; want 0", n, err)
+	}
+	if _, err := repo.Sync(ctx, mediatest.Library(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	if err := db.QueryRow(`select source_url from media where id = $1`, id).Scan(&got); err != nil || got != urls[id] {
+		t.Errorf("after a rescan source_url = %q, %v; want %q", got, err, urls[id])
+	}
+	if _, err := repo.SetSourceURLs(ctx, map[string]string{id: "ftp://nope"}); err == nil {
+		t.Error("a non-web URL was accepted")
 	}
 }

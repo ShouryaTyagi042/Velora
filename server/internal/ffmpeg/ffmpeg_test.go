@@ -65,8 +65,8 @@ func TestThumbnail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b := img.Bounds(); b.Dx() != 480 || b.Dy() != 360 {
-		t.Errorf("thumbnail is %v, want 480×360", b.Size())
+	if b := img.Bounds(); b.Dx() != 320 || b.Dy() != 240 { // narrower than 960: kept, not enlarged
+		t.Errorf("thumbnail is %v, want 320×240", b.Size())
 	}
 }
 

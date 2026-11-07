@@ -30,7 +30,9 @@ func Thumbnail(ctx context.Context, in, out string, at time.Duration) error {
 		"-ss", fmt.Sprintf("%.3f", at.Seconds()),
 		"-i", "file:"+in,
 		"-frames:v", "1",
-		"-vf", "scale=480:-2", // -2: keep the aspect ratio, rounded to an even height
+		// 960 wide (never scaled up): sharp enough for the app's full-width cards and its home
+		// billboard on a 3x phone. -2 keeps the aspect ratio, rounded to an even height.
+		"-vf", "scale='min(960,iw)':-2",
 		"-q:v", "3",
 		"file:"+tmp.Name(),
 	)

@@ -25,7 +25,7 @@ const (
 	maxLimit     = 200
 )
 
-// listMedia handles GET /api/media?kind=video|comic&section=movies|anime&series=<name>&actor=<name>&q=<text>&sort=title|title_desc|recent
+// listMedia handles GET /api/media?kind=video|comic&section=movies|anime&series=<name>&actor=<name>&q=<text>&sort=title|title_desc|recent|random
 // &limit=<n>&after=<cursor>: one page of the library.
 //
 // Every request is a page. Before phase 12 this returned the whole library: at 100k items that was
@@ -63,8 +63,10 @@ func listMedia(repo media.Repository) HandlerE {
 			f.Sort = media.SortTitleDesc
 		case "recent":
 			f.Sort = media.SortRecent
+		case "random":
+			f.Sort = media.SortRandom
 		default:
-			return validationError(`sort must be "title", "title_desc" or "recent"`)
+			return validationError(`sort must be "title", "title_desc", "recent" or "random"`)
 		}
 		if s := q.Get("limit"); s != "" {
 			n, err := strconv.Atoi(s)
@@ -74,6 +76,9 @@ func listMedia(repo media.Repository) HandlerE {
 			f.Limit = n
 		}
 		if c := q.Get("after"); c != "" {
+			if f.Sort == media.SortRandom {
+				return validationError("a random list has no next page; ask again for another shuffle")
+			}
 			id, ok := decodeCursor(c, f.Sort)
 			if !ok {
 				return validationError("after is not a cursor from this list; start again without it")
@@ -91,8 +96,16 @@ func listMedia(repo media.Repository) HandlerE {
 		resp := listResponse{Items: items}
 		if len(items) > want {
 			resp.Items = items[:want]
-			next := encodeCursor(f.Sort, resp.Items[want-1].ID)
-			resp.NextCursor = &next
+			if f.Sort != media.SortRandom {
+				next := encodeCursor(f.Sort, resp.Items[want-1].ID)
+				resp.NextCursor = &next
+			}
+		}
+		if f.Sort == media.SortRandom {
+			// Every answer is a new shuffle: an ETag would turn "another one" into a 304.
+			w.Header().Set("Cache-Control", "no-store")
+			respondJSON(w, http.StatusOK, resp)
+			return nil
 		}
 		respondCachedJSON(w, r, resp)
 		return nil

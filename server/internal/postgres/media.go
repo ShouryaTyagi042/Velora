@@ -118,6 +118,8 @@ func (r *MediaRepo) List(ctx context.Context, user int64, f media.ListFilter) ([
 		}
 	}
 	switch f.Sort {
+	case media.SortRandom:
+		q += ` order by random()` // a full scan of what matches; fine for one shuffle of a library
 	case media.SortRecent:
 		q += ` order by m.added_at desc, m.id desc`
 	case media.SortTitleDesc:
@@ -316,11 +318,16 @@ func upsertActor(ctx context.Context, q querier, name string) (int64, error) {
 // ListActors implements media.Repository: both sources count, only available videos.
 // The primary key allows one link per (video, actor), so count(*) counts distinct videos.
 func (r *MediaRepo) ListActors(ctx context.Context, section media.Section) ([]media.ActorCount, error) {
+	// The cover is the newest of their videos that has a thumbnail (extracted metadata): the
+	// first element of an ordered, filtered array_agg, so it costs no second query.
 	q := `
-		select a.name, count(*)
+		select a.name, count(*),
+		       (array_agg(m.id order by m.added_at desc, m.id desc) filter (where vm.extracted_at is not null))[1],
+		       (array_agg(m.mod_time order by m.added_at desc, m.id desc) filter (where vm.extracted_at is not null))[1]
 		from actors a
 		join media_actors ma on ma.actor_id = a.id
 		join media m         on m.id = ma.media_id
+		left join video_metadata vm on vm.media_id = m.id
 		where m.kind = 'video' and m.missing_since is null`
 	var args []any
 	if section != "" {
@@ -337,10 +344,15 @@ func (r *MediaRepo) ListActors(ctx context.Context, section media.Section) ([]me
 
 	out := []media.ActorCount{}
 	for rows.Next() {
-		var c media.ActorCount
-		if err := rows.Scan(&c.Name, &c.VideoCount); err != nil {
+		var (
+			c       media.ActorCount
+			coverID sql.NullInt64
+			coverMT sql.NullTime
+		)
+		if err := rows.Scan(&c.Name, &c.VideoCount, &coverID, &coverMT); err != nil {
 			return nil, err
 		}
+		c.Cover = cover(coverID, coverMT)
 		out = append(out, c)
 	}
 	return out, rows.Err()
@@ -418,22 +430,31 @@ func (r *MediaRepo) RemoveActor(ctx context.Context, id, name string) error {
 
 // ListSeries implements media.Repository: available episodes per series, in natural order.
 func (r *MediaRepo) ListSeries(ctx context.Context) ([]media.SeriesCount, error) {
+	// The cover is the first episode in natural order that has a thumbnail.
 	rows, err := r.db.QueryContext(ctx, `
-		select series, count(*)
-		from media
-		where series is not null and missing_since is null
-		group by series
-		order by velora_title_key(series) collate "C", series`)
+		select m.series, count(*),
+		       (array_agg(m.id order by velora_title_key(m.title) collate "C", m.id) filter (where vm.extracted_at is not null))[1],
+		       (array_agg(m.mod_time order by velora_title_key(m.title) collate "C", m.id) filter (where vm.extracted_at is not null))[1]
+		from media m
+		left join video_metadata vm on vm.media_id = m.id
+		where m.series is not null and m.missing_since is null
+		group by m.series
+		order by velora_title_key(m.series) collate "C", m.series`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := []media.SeriesCount{}
 	for rows.Next() {
-		var c media.SeriesCount
-		if err := rows.Scan(&c.Name, &c.EpisodeCount); err != nil {
+		var (
+			c       media.SeriesCount
+			coverID sql.NullInt64
+			coverMT sql.NullTime
+		)
+		if err := rows.Scan(&c.Name, &c.EpisodeCount, &coverID, &coverMT); err != nil {
 			return nil, err
 		}
+		c.Cover = cover(coverID, coverMT)
 		out = append(out, c)
 	}
 	return out, rows.Err()
@@ -455,6 +476,14 @@ func sectionCond(col string, param func(any) string) func(media.Section) string 
 	}
 }
 
+// cover is an actor's or a series' cover from the two array_agg columns; nil when none has a thumbnail.
+func cover(id sql.NullInt64, modTime sql.NullTime) *media.Cover {
+	if !id.Valid || !modTime.Valid {
+		return nil
+	}
+	return &media.Cover{ID: formatID(id.Int64), ModTime: modTime.Time} // as scanned, so the URL matches the video's own
+}
+
 func formatID(n int64) string { return strconv.FormatInt(n, 10) }
 
 func isNoRows(err error) bool { return errors.Is(err, sql.ErrNoRows) }
@@ -469,4 +498,56 @@ func parseID(id string) (int64, bool) {
 // character, and % and _ are its wildcards.
 func escapeLike(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}
+
+// Locations returns every available item's id, kind and rel_path: what velora-admin
+// import-sources matches the downloader's records against.
+func (r *MediaRepo) Locations(ctx context.Context) ([]media.Media, error) {
+	rows, err := r.db.QueryContext(ctx, `select id, kind, rel_path from media where missing_since is null`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []media.Media
+	for rows.Next() {
+		var (
+			m  media.Media
+			id int64
+		)
+		if err := rows.Scan(&id, &m.Kind, &m.RelPath); err != nil {
+			return nil, err
+		}
+		m.ID = formatID(id)
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// SetSourceURLs stores each item's source page (media.source_url), all in one transaction, and
+// returns how many rows changed: setting the URL an item already has is not a change, so
+// importing the same records twice reports 0 the second time.
+func (r *MediaRepo) SetSourceURLs(ctx context.Context, urls map[string]string) (int, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	changed := 0
+	for id, u := range urls {
+		n, ok := parseID(id)
+		if !ok {
+			continue
+		}
+		res, err := tx.ExecContext(ctx,
+			`update media set source_url = $2 where id = $1 and source_url is distinct from $2`, n, u)
+		if err != nil {
+			return 0, fmt.Errorf("media %s: %w", id, err)
+		}
+		k, err := res.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+		changed += int(k)
+	}
+	return changed, tx.Commit()
 }
