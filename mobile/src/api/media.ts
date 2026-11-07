@@ -33,6 +33,7 @@ export type VideoMeta = {
   codec: string;
   fps: number;
   preview?: boolean; // a long-press preview of the file as it is now exists (phase 14)
+  short?: boolean; // the Shorts feed's clip (six 6 s cuts, up to 720p, with sound) exists
 };
 
 // Where you are in an item, as the server stored it. Absent fields are 0.
@@ -66,6 +67,7 @@ export type ListOptions = {
   section?: Section; // videos in this section only
   series?: string; // episodes of this anime series only (exact name)
   actor?: string;
+  clip?: "preview" | "short"; // only videos whose clip of this kind is ready
   q?: string; // search titles and actors, ignoring case and accents
   // title (A to Z, natural: 2 before 10) by default. random is a new shuffle every call, with no
   // next page: ask again for more (Surprise me, Shorts).
@@ -81,12 +83,13 @@ export type Page<T> = { items: T[]; nextCursor: string | null };
 // listMedia is one page of the library. The server never sends the whole thing: at 100k items that
 // was 33 MB for a screen showing a dozen cards (phase 12).
 export function listMedia(options: ListOptions = {}): Promise<Page<Media>> {
-  const { kind, section, series, actor, q, sort, limit, after, signal } = options;
+  const { kind, section, series, actor, clip, q, sort, limit, after, signal } = options;
   const params = new URLSearchParams();
   if (kind) params.set("kind", kind);
   if (section) params.set("section", section);
   if (series) params.set("series", series);
   if (actor) params.set("actor", actor);
+  if (clip) params.set("clip", clip);
   if (q) params.set("q", q);
   if (sort) params.set("sort", sort);
   if (limit) params.set("limit", String(limit));
@@ -182,9 +185,19 @@ export function coverUrl(c: Cover): string {
 // randomMedia is up to n items picked at random (of kind, if given): a fresh shuffle every call.
 export async function randomMedia(
   n: number,
-  { kind, section, signal }: { kind?: MediaKind; section?: Section; signal?: AbortSignal } = {},
+  { kind, section, clip, signal }: { kind?: MediaKind; section?: Section; clip?: "preview" | "short"; signal?: AbortSignal } = {},
 ): Promise<Media[]> {
-  return (await listMedia({ kind, section, sort: "random", limit: n, signal })).items;
+  return (await listMedia({ kind, section, clip, sort: "random", limit: n, signal })).items;
+}
+
+// SHORT_FORMAT changes whenever the server's Shorts clip changes shape (2: eight 8 s cuts). The
+// phone caches clips forever by URL, so a new format must be a new URL, even for the same file.
+const SHORT_FORMAT = 2;
+
+// shortUrl is a video's Shorts clip: only for a video with video.short. Versioned like previews,
+// and by the clip format.
+export function shortUrl(m: Media): string {
+  return `${baseUrl}/api/media/${encodeURIComponent(m.id)}/short?v=${encodeURIComponent(m.modTime)}&f=${SHORT_FORMAT}`;
 }
 
 // previewUrl is a video's long-press preview: a short silent montage the server cut from it. Only

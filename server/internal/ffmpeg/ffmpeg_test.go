@@ -121,6 +121,44 @@ func TestPreview(t *testing.T) {
 	}
 }
 
+// TestShort cuts the Shorts clip from a generated 120 s video with sound: eight 8 s cuts, audio
+// kept, never scaled up (480 high stays 480).
+func TestShort(t *testing.T) {
+	if err := Check(); err != nil {
+		t.Skip(err)
+	}
+	dir := t.TempDir()
+	in := filepath.Join(dir, "film.mp4")
+	cmd := exec.Command("ffmpeg", "-v", "error",
+		"-f", "lavfi", "-i", "testsrc=duration=120:size=640x480:rate=30",
+		"-f", "lavfi", "-i", "sine=duration=120",
+		"-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", "file:"+in)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("can't generate a test video: %v: %s", err, out)
+	}
+	out := filepath.Join(dir, "short.mp4")
+	if err := Short(context.Background(), in, out, 120_000); err != nil {
+		t.Fatal(err)
+	}
+	v, err := Probe(context.Background(), out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Width != 640 || v.Height != 480 || v.FPS != 24 {
+		t.Errorf("short = %+v, want 640×480 (not enlarged) at 24 fps", v)
+	}
+	if v.DurationMs < 63_000 || v.DurationMs > 65_000 {
+		t.Errorf("short DurationMs = %d, want about 64000 (8 × 8 s)", v.DurationMs)
+	}
+	streams, err := exec.Command("ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", "file:"+out).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(streams); got != "video\naudio\n" {
+		t.Errorf("short streams = %q, want video and audio", got)
+	}
+}
+
 func TestPreviewShortVideoAndNoUpscale(t *testing.T) {
 	in := testVideo(t) // 2 s, 320×240
 	out := filepath.Join(t.TempDir(), "preview.mp4")

@@ -106,7 +106,7 @@ func (s *Store) List(ctx context.Context, user int64, f media.ListFilter) ([]med
 	out := make([]media.Media, 0, len(s.items))
 	for _, e := range s.items {
 		if e.missing || (f.Kind != "" && e.m.Kind != f.Kind) || (f.Section != "" && e.m.Section != f.Section) ||
-			(f.Series != "" && e.m.Series != f.Series) || (f.Actor != "" && !e.m.HasActor(f.Actor)) ||
+			(f.Series != "" && e.m.Series != f.Series) || (f.Actor != "" && !e.m.HasActor(f.Actor)) || !hasClip(e.m, f.Clip) ||
 			(q != "" && !matches(e.m, q)) || (after != nil && order(e.m, *after) <= 0) {
 			continue
 		}
@@ -123,6 +123,17 @@ func (s *Store) List(ctx context.Context, user int64, f media.ListFilter) ([]med
 		out = out[:f.Limit]
 	}
 	return out, nil
+}
+
+// hasClip reports whether m's clip of kind c is ready ("" matches everything).
+func hasClip(m media.Media, c media.Clip) bool {
+	switch c {
+	case media.ClipPreview:
+		return m.Video != nil && m.Video.Preview
+	case media.ClipShort:
+		return m.Video != nil && m.Video.Short
+	}
+	return true
 }
 
 // byTitle and byRecent are List's orders (media.SortTitle, media.SortRecent).

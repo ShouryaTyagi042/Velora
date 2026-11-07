@@ -11,9 +11,9 @@ import (
 // NewHandler returns the HTTP handler for the whole API: routes wrapped in middleware.
 // It depends on interfaces (media.Repository, Jobs, fs.FS, Authenticator), never on a
 // concrete store, scanner or directory. files is the media library; media RelPaths are opened
-// inside it. thumbs holds the extractor's video thumbnails, {id}.jpg, and previews its long-press
-// previews, {id}.mp4.
-func NewHandler(repo media.Repository, js Jobs, files, thumbs, previews fs.FS, authn Authenticator) http.Handler {
+// inside it. thumbs holds the extractor's video thumbnails, {id}.jpg, previews its long-press
+// previews, {id}.mp4, and shorts its Shorts clips, {id}.mp4.
+func NewHandler(repo media.Repository, js Jobs, files, thumbs, previews, shorts fs.FS, authn Authenticator) http.Handler {
 	// Everything on this mux needs a session: it's mounted below behind requireUser, so a new
 	// route is protected by default and can't be forgotten.
 	mux := http.NewServeMux()
@@ -30,6 +30,7 @@ func NewHandler(repo media.Repository, js Jobs, files, thumbs, previews fs.FS, a
 	mux.Handle("GET /api/continue", getContinue(repo))
 	mux.Handle("GET /api/media/{id}/thumbnail", getThumbnail(repo, files, thumbs))
 	mux.Handle("GET /api/media/{id}/preview", getPreview(repo, previews))
+	mux.Handle("GET /api/media/{id}/short", getShort(repo, shorts))
 	mux.Handle("GET /api/media/{id}/stream", streamVideo(repo, files, http.ServeContent)) // GET patterns also match HEAD
 	mux.Handle("GET /api/media/{id}/pages", listPages(repo))
 	mux.Handle("GET /api/media/{id}/pages/{n}", getPage(repo, files))

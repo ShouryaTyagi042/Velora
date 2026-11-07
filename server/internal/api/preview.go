@@ -18,6 +18,17 @@ import (
 // checking the database, not just the file, means a stale preview of a replaced file is never
 // served under the new file's ?v=, where it would then be cached forever.
 func getPreview(repo media.Repository, previews fs.FS) HandlerE {
+	return getClip(repo, previews, "preview", func(v *media.VideoMeta) bool { return v.Preview })
+}
+
+// getShort handles GET /api/media/{id}/short?v=<modTime>: the Shorts feed's clip, served exactly
+// like the preview.
+func getShort(repo media.Repository, shorts fs.FS) HandlerE {
+	return getClip(repo, shorts, "short", func(v *media.VideoMeta) bool { return v.Short })
+}
+
+// getClip serves a clip from dir, {id}.mp4, when ready says the database has a current one.
+func getClip(repo media.Repository, previews fs.FS, name string, ready func(*media.VideoMeta) bool) HandlerE {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		id := r.PathValue("id")
 		m, err := repo.Get(r.Context(), currentUser(r).ID, id)
@@ -27,17 +38,17 @@ func getPreview(repo media.Repository, previews fs.FS) HandlerE {
 		if err != nil {
 			return err
 		}
-		if m.Kind != media.KindVideo || m.Video == nil || !m.Video.Preview {
-			return notFoundError("media %s has no preview", id)
+		if m.Kind != media.KindVideo || m.Video == nil || !ready(m.Video) {
+			return notFoundError("media %s has no %s", id, name)
 		}
 
 		f, err := previews.Open(m.ID + ".mp4")
 		if errors.Is(err, fs.ErrNotExist) {
 			// The database says yes but the file is gone (the cache dir was cleared).
-			return notFoundError("media %s has no preview", id)
+			return notFoundError("media %s has no %s", id, name)
 		}
 		if err != nil {
-			return fmt.Errorf("open preview %s: %w", m.ID, err)
+			return fmt.Errorf("open %s %s: %w", name, m.ID, err)
 		}
 		defer f.Close()
 		info, err := f.Stat()
@@ -46,7 +57,7 @@ func getPreview(repo media.Repository, previews fs.FS) HandlerE {
 		}
 		content, ok := f.(io.ReadSeeker)
 		if !ok {
-			return fmt.Errorf("preview %s: file does not support seeking", m.ID)
+			return fmt.Errorf("%s %s: file does not support seeking", name, m.ID)
 		}
 		// Versioned by the video's modTime, like the thumbnail: a new file is a new URL.
 		if r.URL.Query().Get("v") != "" {

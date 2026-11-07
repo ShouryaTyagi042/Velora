@@ -97,7 +97,8 @@ func run() error {
 	}
 	thumbDir := filepath.Join(cacheDir, "thumbs")
 	previewDir := filepath.Join(cacheDir, "previews")
-	for _, dir := range []string{thumbDir, previewDir} {
+	shortDir := filepath.Join(cacheDir, "shorts")
+	for _, dir := range []string{thumbDir, previewDir, shortDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
@@ -116,7 +117,7 @@ func run() error {
 	registry := jobs.NewRegistry()
 	runner := jobs.NewRunner(jobsCtx, registry)
 	repo := postgres.NewMediaRepo(db)
-	ext := extractor.New(repo, mediaDir, thumbDir, previewDir, workers, registry)
+	ext := extractor.New(repo, mediaDir, thumbDir, previewDir, shortDir, workers, registry)
 	lib := &library.Library{FS: root.FS(), Store: repo, Jobs: runner, Scanned: ext.Wake}
 
 	if _, err := lib.Rescan(ctx); err != nil {
@@ -133,7 +134,7 @@ func run() error {
 	}()
 
 	srv := &http.Server{
-		Handler: api.CORS(corsOrigins(), api.NewHandler(repo, serverJobs{lib, registry}, root.FS(), os.DirFS(thumbDir), os.DirFS(previewDir), authn)),
+		Handler: api.CORS(corsOrigins(), api.NewHandler(repo, serverJobs{lib, registry}, root.FS(), os.DirFS(thumbDir), os.DirFS(previewDir), os.DirFS(shortDir), authn)),
 		// A client that connects and sends nothing would otherwise hold a goroutine forever.
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,

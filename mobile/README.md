@@ -33,8 +33,11 @@ src/app/(tabs)/(home)/index.tsx     "/": billboard (a random video; its preview 
                                     Continue watching, new films, actors, new anime, series, Continue reading,
                                     comics. Pull down to refresh: every rail, and a new billboard
 src/app/(tabs)/(home)/comics.tsx    "/comics": comic covers, 3 across, A–Z / Z–A; pull to rescan
-src/app/(tabs)/(shorts)/shorts.tsx  "/shorts": vertical feed, films and anime in turn, each starting mid-video;
-                                    one shared player, tap to pause, sound toggle, Watch / Details
+src/app/(tabs)/(shorts)/shorts.tsx  "/shorts": vertical feed of server-cut clips (the Shorts clip, else the
+                                    long-press preview) and comics as stories (10 pages from past 60%), Mix /
+                                    Videos / Anime / Comics; the page on screen and its
+                                    neighbours each own a preloaded player, shown only once it has drawn its
+                                    own first frame; tap to pause, sound toggle, Watch / Details
 src/app/(tabs)/(actors)/            "/actors": one banner per actor (their newest still); "/actor/[name]":
                                     their videos, one per row, Shuffle play; "/videos": every film
 src/app/(tabs)/(anime)/             "/anime": one banner per series; "/series/[name]": Play / Resume and the
@@ -53,8 +56,8 @@ src/api/                            getJSON/sendJSON (with the Bearer token), Ap
                                     streams, pages, thumbnails; authHeaders for the player and images
 src/auth/                           AuthProvider (session state, 401 → login), token in SecureStore
 src/preview/                        long-press previews: one shared muted player (PreviewProvider, around the
-                                    tabs) for videos, a page flip for comics (ComicPreview: its first pages
-                                    over the cover), which card is previewing (a tiny external store)
+                                    tabs) for videos, a page flip for comics (ComicPreview: pages from past
+                                    60% of it, lib/pages), which card is previewing (a tiny external store)
 src/progress/                       local-first progress saves (throttled, one in flight) and launch reconcile
 src/hooks/                          useAsync, usePlayerStatus, useGlass, usePreload
 src/components/                     Text, Button (play / primary / secondary / quiet), Skeleton, Surface, Icon,

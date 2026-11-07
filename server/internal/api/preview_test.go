@@ -23,7 +23,7 @@ func TestPreview(t *testing.T) {
 	}), newFakeJobs(nil, nil), fstest.MapFS{}, fstest.MapFS{}, fstest.MapFS{
 		"v1.mp4": {Data: []byte("0123456789 an mp4")},
 		"v2.mp4": {Data: []byte("an old preview")},
-	}, a)
+	}, fstest.MapFS{}, a)
 	bearer := "Bearer " + token
 
 	rec := get(t, h, "/api/media/v1/preview?v=1", "Authorization", bearer)

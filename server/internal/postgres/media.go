@@ -47,7 +47,7 @@ select m.id, m.fingerprint, m.kind, m.title, m.rel_path, coalesce(m.series, ''),
        m.mod_time, m.added_at, cm.page_count, cm.pages,
        vm.extracted_at is not null, coalesce(vm.duration_ms, 0), coalesce(vm.width, 0),
        coalesce(vm.height, 0), coalesce(vm.codec, ''), coalesce(vm.fps, 0)::float8,
-       coalesce(vm.preview_for = m.mod_time, false),
+       coalesce(vm.preview_for = m.mod_time, false), coalesce(vm.short_for = m.mod_time, false),
        coalesce(wp.updated_at, rp.updated_at), coalesce(wp.position_ms, 0), coalesce(wp.duration_ms, 0),
        coalesce(rp.page, 0), coalesce(rp.page_count, 0), coalesce(wp.completed, rp.completed, false),
        coalesce((select json_agg(json_build_object('name', a.name, 'source', ma.source)
@@ -85,6 +85,12 @@ func (r *MediaRepo) List(ctx context.Context, user int64, f media.ListFilter) ([
 	}
 	if f.Series != "" {
 		q += ` and m.series = ` + param(f.Series) // media_series_title_idx
+	}
+	switch f.Clip {
+	case media.ClipPreview:
+		q += ` and vm.preview_for = m.mod_time`
+	case media.ClipShort:
+		q += ` and vm.short_for = m.mod_time`
 	}
 	if f.Actor != "" {
 		// An exists, not a join: the subquery in selectMedia still sees every actor of the video.
@@ -185,7 +191,7 @@ func (r *MediaRepo) scanMedia(row interface{ Scan(...any) error }) (media.Media,
 	)
 	err := row.Scan(&id, &m.Fingerprint, &m.Kind, &m.Title, &m.RelPath, &m.Series, &m.MimeType, &m.SizeBytes,
 		&m.ModTime, &m.AddedAt, &pageCount, r.types.SQLScanner(&pages),
-		&extracted, &v.DurationMs, &v.Width, &v.Height, &v.Codec, &v.FPS, &v.Preview,
+		&extracted, &v.DurationMs, &v.Width, &v.Height, &v.Codec, &v.FPS, &v.Preview, &v.Short,
 		&saved, &p.PositionMs, &p.DurationMs, &p.Page, &p.PageCount, &p.Completed, &actors)
 	if err != nil {
 		return media.Media{}, err

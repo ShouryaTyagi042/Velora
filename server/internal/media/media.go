@@ -94,6 +94,9 @@ type VideoMeta struct {
 	// Preview is whether a long-press preview of the file as it is now exists (phase 14):
 	// GET /api/media/{id}/preview answers 200 exactly when this is true.
 	Preview bool `json:"preview,omitempty"`
+	// Short is whether the Shorts feed's clip of the file as it is now exists:
+	// GET /api/media/{id}/short answers 200 exactly when this is true.
+	Short bool `json:"short,omitempty"`
 }
 
 // Progress is where you are in one item: a position for a video, a page for a comic.

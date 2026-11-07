@@ -36,6 +36,11 @@ type Store interface {
 	// SetPreview records that id's preview was made from the file as it was at modTime.
 	SetPreview(ctx context.Context, id string, modTime time.Time) error
 	RecordPreviewFailure(ctx context.Context, id string, reason string) error
+
+	// PendingShorts, SetShort and RecordShortFailure are the same for the Shorts feed's clips.
+	PendingShorts(ctx context.Context, limit int) ([]media.Media, error)
+	SetShort(ctx context.Context, id string, modTime time.Time) error
+	RecordShortFailure(ctx context.Context, id string, reason string) error
 }
 
 const (
@@ -58,6 +63,7 @@ type Extractor struct {
 	MediaDir   string         // the library root; a video's file is MediaDir/RelPath
 	ThumbDir   string         // thumbnails are ThumbDir/{id}.jpg
 	PreviewDir string         // previews are PreviewDir/{id}.mp4; "" makes none
+	ShortDir   string         // Shorts clips are ShortDir/{id}.mp4; "" makes none
 	Workers    int            // how many videos are extracted at once; at least 1
 	Idle       time.Duration  // how long to wait for a Wake before looking again anyway
 	Jobs       *jobs.Registry // where each round is reported; nil reports nowhere
@@ -66,20 +72,21 @@ type Extractor struct {
 	Probe     func(ctx context.Context, path string) (media.VideoMeta, error)
 	Thumbnail func(ctx context.Context, in, out string, at time.Duration) error
 	Preview   func(ctx context.Context, in, out string, durationMs int) error
+	Short     func(ctx context.Context, in, out string, durationMs int) error
 
 	wakeOnce sync.Once
 	wake     chan struct{}
 }
 
 // New returns an Extractor that runs the real ffprobe and ffmpeg, workers at a time.
-func New(store Store, mediaDir, thumbDir, previewDir string, workers int, reg *jobs.Registry) *Extractor {
+func New(store Store, mediaDir, thumbDir, previewDir, shortDir string, workers int, reg *jobs.Registry) *Extractor {
 	return &Extractor{
-		Store: store, MediaDir: mediaDir, ThumbDir: thumbDir, PreviewDir: previewDir, Workers: workers, Jobs: reg,
-		Idle: time.Minute, Probe: ffmpeg.Probe, Thumbnail: ffmpeg.Thumbnail, Preview: ffmpeg.Preview,
+		Store: store, MediaDir: mediaDir, ThumbDir: thumbDir, PreviewDir: previewDir, ShortDir: shortDir, Workers: workers, Jobs: reg,
+		Idle: time.Minute, Probe: ffmpeg.Probe, Thumbnail: ffmpeg.Thumbnail, Preview: ffmpeg.Preview, Short: ffmpeg.Short,
 	}
 }
 
-// PreviewPath is where the preview of media id lives.
+// PreviewPath is where the preview (or, in ShortDir, the Shorts clip) of media id lives.
 func PreviewPath(previewDir, id string) string {
 	return filepath.Join(previewDir, id+".mp4")
 }
@@ -114,6 +121,9 @@ func (e *Extractor) Run(ctx context.Context) {
 		n, err := e.Round(ctx)
 		if err == nil && n == 0 && ctx.Err() == nil {
 			n, err = e.PreviewRound(ctx)
+		}
+		if err == nil && n == 0 && ctx.Err() == nil {
+			n, err = e.ShortRound(ctx) // last: the biggest files, and only the Shorts tab needs them
 		}
 		if ctx.Err() != nil {
 			log.Printf("extractor: stopped")
@@ -162,6 +172,19 @@ func (e *Extractor) PreviewRound(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	return e.pool(ctx, "preview", pending, e.onePreview)
+}
+
+// ShortRound makes Shorts clips like PreviewRound makes previews: a small batch, Workers at a
+// time, only once every preview is made. It makes none without a ShortDir.
+func (e *Extractor) ShortRound(ctx context.Context) (int, error) {
+	if e.ShortDir == "" || e.Short == nil {
+		return 0, nil
+	}
+	pending, err := e.Store.PendingShorts(ctx, previewsPerWorker*e.workers())
+	if err != nil || len(pending) == 0 {
+		return 0, err
+	}
+	return e.pool(ctx, "short", pending, e.oneShort)
 }
 
 // pool runs fn on every video in pending, Workers at a time, reported as a job called name.
@@ -269,27 +292,46 @@ func (e *Extractor) extract(ctx context.Context, m media.Media) (media.VideoMeta
 
 // onePreview makes m's preview. Like one, it returns only database errors.
 func (e *Extractor) onePreview(ctx context.Context, m media.Media) error {
+	return e.oneClip(ctx, m, clip{"preview", e.PreviewDir, e.Preview, e.Store.SetPreview, e.Store.RecordPreviewFailure})
+}
+
+// oneShort makes m's Shorts clip.
+func (e *Extractor) oneShort(ctx context.Context, m media.Media) error {
+	return e.oneClip(ctx, m, clip{"short", e.ShortDir, e.Short, e.Store.SetShort, e.Store.RecordShortFailure})
+}
+
+// clip is one kind of montage the extractor cuts from each video: where it goes, how it's made,
+// and how its progress is recorded.
+type clip struct {
+	name string
+	dir  string
+	make func(ctx context.Context, in, out string, durationMs int) error
+	done func(ctx context.Context, id string, modTime time.Time) error
+	fail func(ctx context.Context, id string, reason string) error
+}
+
+func (e *Extractor) oneClip(ctx context.Context, m media.Media, c clip) error {
 	if m.Video == nil {
-		return e.Store.RecordPreviewFailure(ctx, m.ID, "no duration")
+		return c.fail(ctx, m.ID, "no duration")
 	}
 	start := time.Now()
 	path := filepath.Join(e.MediaDir, filepath.FromSlash(m.RelPath))
-	err := os.MkdirAll(e.PreviewDir, 0o755)
+	err := os.MkdirAll(c.dir, 0o755)
 	if err == nil {
-		err = e.Preview(ctx, path, PreviewPath(e.PreviewDir, m.ID), m.Video.DurationMs)
+		err = c.make(ctx, path, PreviewPath(c.dir, m.ID), m.Video.DurationMs)
 	}
 	if ctx.Err() != nil {
 		return nil // shutting down: not the file's fault
 	}
 	if err != nil {
-		log.Printf("extractor: preview %s (%s) failed: %v", m.ID, m.Title, err)
-		return e.Store.RecordPreviewFailure(ctx, m.ID, err.Error())
+		log.Printf("extractor: %s %s (%s) failed: %v", c.name, m.ID, m.Title, err)
+		return c.fail(ctx, m.ID, err.Error())
 	}
-	// The ModTime the preview was made from, read before it was made: if the file changed while
-	// ffmpeg ran, the preview is already stale and is made again.
-	if err := e.Store.SetPreview(ctx, m.ID, m.ModTime); err != nil {
+	// The ModTime the clip was made from, read before it was made: if the file changed while
+	// ffmpeg ran, the clip is already stale and is made again.
+	if err := c.done(ctx, m.ID, m.ModTime); err != nil {
 		return err
 	}
-	log.Printf("extractor: preview %s (%s) in %s", m.ID, m.Title, time.Since(start).Round(time.Millisecond))
+	log.Printf("extractor: %s %s (%s) in %s", c.name, m.ID, m.Title, time.Since(start).Round(time.Millisecond))
 	return nil
 }

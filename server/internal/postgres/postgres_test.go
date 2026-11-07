@@ -393,3 +393,45 @@ func TestSourceURLs(t *testing.T) {
 		t.Error("a non-web URL was accepted")
 	}
 }
+
+// TestShortQueue: a Shorts clip is pending once a video has metadata, current after SetShort for
+// the file's modTime, and List(Clip: short) returns only videos whose clip is current.
+func TestShortQueue(t *testing.T) {
+	repo := NewMediaRepo(emptyDB(t))
+	ctx := context.Background()
+	if _, err := repo.Sync(ctx, mediatest.Library(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := repo.PendingShorts(ctx, 10); err != nil || len(p) != 0 {
+		t.Fatalf("PendingShorts before metadata = %d, %v; want none", len(p), err)
+	}
+	videos, err := repo.List(ctx, 0, media.ListFilter{Kind: media.KindVideo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range videos {
+		if err := repo.SetVideoMeta(ctx, m.ID, media.VideoMeta{DurationMs: 60_000, Width: 640, Height: 360, Codec: "h264", FPS: 24}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pending, err := repo.PendingShorts(ctx, 10)
+	if err != nil || len(pending) != 4 {
+		t.Fatalf("PendingShorts = %d, %v; want 4", len(pending), err)
+	}
+	if err := repo.SetShort(ctx, pending[0].ID, pending[0].ModTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RecordShortFailure(ctx, pending[1].ID, "boom"); err != nil {
+		t.Fatal(err)
+	}
+	if left, _ := repo.PendingShorts(ctx, 10); len(left) != 3 {
+		t.Errorf("PendingShorts after one made = %d, want 3 (a failure is retried)", len(left))
+	}
+	got, err := repo.List(ctx, 0, media.ListFilter{Clip: media.ClipShort})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != pending[0].ID || !got[0].Video.Short || got[0].Video.Preview {
+		t.Errorf("List(clip short) = %+v, want only %s, with Short and not Preview", got, pending[0].ID)
+	}
+}

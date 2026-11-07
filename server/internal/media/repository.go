@@ -51,6 +51,7 @@ type ListFilter struct {
 	Section Section // videos in this section only; "" for everything
 	Series  string  // anime episodes of this series only (exact name); "" for all
 	Actor   string  // exact name, any source; "" for all
+	Clip    Clip    // only videos whose clip of this kind is ready; "" for all
 	// Query matches a title, an actor's name or an anime series containing it, ignoring case and accents
 	// ("amelie" finds "Amélie"). "" for all.
 	Query string
@@ -62,6 +63,14 @@ type ListFilter struct {
 	After string
 	Limit int // at most this many items; 0 for all
 }
+
+// Clip is a montage the extractor cuts from a video.
+type Clip string
+
+const (
+	ClipPreview Clip = "preview" // the long-press preview
+	ClipShort   Clip = "short"   // the Shorts feed's clip
+)
 
 // Sort is the order List returns items in. Every order ends with the id, so it is total:
 // two items never tie, and a page boundary can't skip or repeat one.

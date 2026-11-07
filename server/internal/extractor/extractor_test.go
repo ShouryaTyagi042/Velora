@@ -62,6 +62,14 @@ func (s *fakeStore) SetPreview(ctx context.Context, id string, modTime time.Time
 	return nil
 }
 
+// The Shorts clips aren't exercised here beyond compiling: they share oneClip and pool with the
+// previews, which TestPreviewRound covers.
+func (s *fakeStore) PendingShorts(ctx context.Context, limit int) ([]media.Media, error) {
+	return nil, nil
+}
+func (s *fakeStore) SetShort(ctx context.Context, id string, modTime time.Time) error { return nil }
+func (s *fakeStore) RecordShortFailure(ctx context.Context, id, reason string) error  { return nil }
+
 func (s *fakeStore) RecordPreviewFailure(ctx context.Context, id, reason string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

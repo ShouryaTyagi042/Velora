@@ -25,7 +25,7 @@ const (
 	maxLimit     = 200
 )
 
-// listMedia handles GET /api/media?kind=video|comic&section=movies|anime&series=<name>&actor=<name>&q=<text>&sort=title|title_desc|recent|random
+// listMedia handles GET /api/media?kind=video|comic&section=movies|anime&series=<name>&actor=<name>&q=<text>&sort=title|title_desc|recent|random&clip=preview|short
 // &limit=<n>&after=<cursor>: one page of the library.
 //
 // Every request is a page. Before phase 12 this returned the whole library: at 100k items that was
@@ -51,6 +51,12 @@ func listMedia(repo media.Repository) HandlerE {
 		}
 		if len(f.Series) > maxFilterLen {
 			return validationError("series must be at most %d bytes", maxFilterLen)
+		}
+		switch c := media.Clip(q.Get("clip")); c {
+		case "", media.ClipPreview, media.ClipShort:
+			f.Clip = c
+		default:
+			return validationError("clip must be %q or %q", media.ClipPreview, media.ClipShort)
 		}
 		f.Query = strings.TrimSpace(q.Get("q")) // an empty search is no search
 		if len(f.Actor) > maxFilterLen || len(f.Query) > maxFilterLen {
