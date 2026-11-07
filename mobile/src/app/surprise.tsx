@@ -1,9 +1,12 @@
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
-import { useCallback, useState } from "react";
+import { Image } from "expo-image";
+import { useVideoPlayer, VideoView } from "expo-video";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ScrollView, StyleSheet, View } from "react-native";
 
-import { MediaKind, randomMedia, Section, type Media } from "@/api/media";
+import { authHeaders } from "@/api/client";
+import { MediaKind, pageUrl, previewUrl, randomMedia, Section, shortUrl, type Media } from "@/api/media";
 import { Button } from "@/components/Button";
 import { Chip } from "@/components/Chip";
 import { EmptyView } from "@/components/EmptyView";
@@ -14,8 +17,9 @@ import { Skeleton } from "@/components/Skeleton";
 import { Text } from "@/components/Text";
 import { useAsync } from "@/hooks/useAsync";
 import { formatDuration } from "@/lib/format";
+import { latePages } from "@/lib/pages";
 import { resumeAt, resumePage } from "@/progress/resume";
-import { radius, space, useAppTheme } from "@/theme";
+import { motion, onMedia, radius, space, useAppTheme } from "@/theme";
 
 type SurpriseKind = "any" | "film" | "anime" | "comic";
 
@@ -38,7 +42,13 @@ async function pick(kind: SurpriseKind, signal: AbortSignal): Promise<Media | nu
           ? { kind: MediaKind.Comic }
           : {};
   const items = await randomMedia(5, { ...opts, signal });
-  return items.find((m) => m.kind === MediaKind.Comic || m.video) ?? items[0] ?? null;
+  // Prefer what can preview itself on the sheet: a video with a clip, a comic with pages to flip.
+  return (
+    items.find((m) => (m.kind === MediaKind.Comic ? (m.comic?.pageCount ?? 0) > 2 : m.video?.short || m.video?.preview)) ??
+    items.find((m) => m.kind === MediaKind.Comic || m.video) ??
+    items[0] ??
+    null
+  );
 }
 
 // Surprise me: a sheet with one thing picked at random from your library, of the kind you chose.
@@ -73,7 +83,8 @@ export default function Surprise() {
       ) : state.data === null ? (
         <EmptyView title="Nothing to pick from" detail="There's nothing of this kind in your library yet. Try another kind." />
       ) : (
-        <Reveal media={state.data} onShuffle={shuffle} />
+        // Keyed by the pick: a new pick is a new preview, from its start.
+        <Reveal key={state.data.id} media={state.data} onShuffle={shuffle} />
       )}
     </ScrollView>
   );
@@ -90,7 +101,9 @@ function Reveal({ media, onShuffle }: { media: Media; onShuffle: () => void }) {
 
   return (
     <View style={styles.reveal}>
-      <Poster media={media} style={isVideo ? styles.still : styles.comic} />
+      <Poster media={media} style={isVideo ? styles.still : styles.comic}>
+        {isVideo ? <VideoTeaser media={media} /> : <PageFlip comic={media} />}
+      </Poster>
       <View style={styles.text}>
         <Text variant="display" accessibilityRole="header">
           {media.title}
@@ -112,6 +125,62 @@ function Reveal({ media, onShuffle }: { media: Media; onShuffle: () => void }) {
         <Button label="Shuffle again" icon={{ sf: "shuffle", md: "shuffle" }} variant="secondary" onPress={onShuffle} style={styles.half} />
         {isVideo && <Button label="Details" icon={{ sf: "info.circle", md: "info" }} variant="secondary" onPress={() => go("/media/[id]")} style={styles.half} />}
       </View>
+    </View>
+  );
+}
+
+// VideoTeaser plays the pick's clip over its still as soon as the sheet shows it: the Shorts clip
+// if the server has made one, else the long-press preview; muted, looping. The still stays until
+// the clip's first frame is drawn. Nothing for a video with neither.
+function VideoTeaser({ media }: { media: Media }) {
+  const uri = media.video?.short ? shortUrl(media) : media.video?.preview ? previewUrl(media) : null;
+  return uri ? <LoopingClip uri={uri} /> : null;
+}
+
+function LoopingClip({ uri }: { uri: string }) {
+  const source = useMemo(() => ({ uri, headers: authHeaders() }), [uri]);
+  const player = useVideoPlayer(source, (p) => {
+    p.muted = true;
+    p.loop = true;
+    p.audioMixingMode = "mixWithOthers"; // silent: never interrupt music playing elsewhere
+    p.play();
+  });
+  const [drawn, setDrawn] = useState(false);
+  return (
+    <VideoView
+      player={player}
+      style={[StyleSheet.absoluteFill, { opacity: drawn ? 1 : 0 }]}
+      contentFit="cover"
+      nativeControls={false}
+      allowsPictureInPicture={false}
+      onFirstFrameRender={() => setDrawn(true)}
+      pointerEvents="none"
+    />
+  );
+}
+
+// PageFlip turns a comic's late pages (from past 60%) over its cover, one after another, round
+// and round, while the sheet is open: the comic's own preview.
+const FLIP_PAGES = 8;
+const FLIP_MS = 1400;
+
+function PageFlip({ comic }: { comic: Media }) {
+  const urls = useMemo(() => latePages(comic.comic?.pageCount ?? 0, FLIP_PAGES).map((p) => pageUrl(comic, p)), [comic]);
+  const [n, setN] = useState(0);
+
+  useEffect(() => {
+    void Image.prefetch(urls, { cachePolicy: "disk", headers: authHeaders() });
+  }, [urls]);
+  useEffect(() => {
+    if (urls.length < 2) return;
+    const t = setTimeout(() => setN((i) => (i + 1) % urls.length), FLIP_MS);
+    return () => clearTimeout(t);
+  }, [n, urls.length]);
+
+  if (urls.length === 0) return null;
+  return (
+    <View style={[StyleSheet.absoluteFill, { backgroundColor: onMedia.backdrop }]} pointerEvents="none">
+      <Image source={{ uri: urls[n], headers: authHeaders() }} style={StyleSheet.absoluteFill} contentFit="contain" transition={motion.fast} accessible={false} />
     </View>
   );
 }
