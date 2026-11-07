@@ -19,8 +19,8 @@ export function SortButton({ descending, onToggle }: Props) {
       accessibilityHint={descending ? "Sorts A to Z" : "Sorts Z to A"}
       style={({ pressed }) => [styles.button, pressed && styles.pressed]}
     >
-      <Icon sf="arrow.up.arrow.down" md="swap_vert" size={18} color={colors.primary} />
-      <Text variant="label" color={colors.primary}>
+      <Icon sf="arrow.up.arrow.down" md="swap_vert" size={18} color={colors.primaryText} />
+      <Text variant="label" color={colors.primaryText}>
         {descending ? "Z–A" : "A–Z"}
       </Text>
     </Pressable>

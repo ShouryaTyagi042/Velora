@@ -18,7 +18,7 @@ export function SignOutButton() {
       accessibilityLabel={user ? `Sign out ${user.username}` : "Sign out"}
       style={({ pressed }) => [styles.button, pressed && styles.pressed]}
     >
-      <Icon sf="rectangle.portrait.and.arrow.right" md="logout" size={20} color={colors.primary} />
+      <Icon sf="rectangle.portrait.and.arrow.right" md="logout" size={20} color={colors.textMuted} />
     </Pressable>
   );
 }

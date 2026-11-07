@@ -67,7 +67,9 @@ export type ListOptions = {
   series?: string; // episodes of this anime series only (exact name)
   actor?: string;
   q?: string; // search titles and actors, ignoring case and accents
-  sort?: "title" | "title_desc" | "recent"; // title (A to Z, natural: 2 before 10) by default
+  // title (A to Z, natural: 2 before 10) by default. random is a new shuffle every call, with no
+  // next page: ask again for more (Surprise me, Shorts).
+  sort?: "title" | "title_desc" | "recent" | "random";
   limit?: number; // the server's default is 50, its maximum 200
   after?: string; // the previous page's nextCursor
   signal?: AbortSignal;
@@ -109,7 +111,11 @@ export function removeActor(id: string, name: string): Promise<void> {
   return sendJSON<void>("DELETE", `/api/media/${encodeURIComponent(id)}/actors/${encodeURIComponent(name)}`);
 }
 
-export type ActorCount = { name: string; videoCount: number };
+// Cover is the video whose thumbnail stands for an actor or a series: an actor's newest video, a
+// series' first episode. Absent while none of them has a thumbnail yet.
+export type Cover = { id: string; modTime: string };
+
+export type ActorCount = { name: string; videoCount: number; cover?: Cover };
 
 // listActors is every actor with at least one available video (in section, if given), by name.
 export async function listActors({ section, signal }: { section?: Section; signal?: AbortSignal } = {}): Promise<
@@ -119,7 +125,7 @@ export async function listActors({ section, signal }: { section?: Section; signa
   return body.items;
 }
 
-export type SeriesCount = { name: string; episodeCount: number };
+export type SeriesCount = { name: string; episodeCount: number; cover?: Cover };
 
 // listSeries is every anime series with at least one available episode, in natural order.
 export async function listSeries({ signal }: { signal?: AbortSignal } = {}): Promise<SeriesCount[]> {
@@ -166,6 +172,19 @@ export function pageUrl(comic: Media, n: number): string {
 export function thumbnailUrl(m: Media): string | null {
   if (m.kind === MediaKind.Video && !m.video) return null;
   return `${baseUrl}/api/media/${encodeURIComponent(m.id)}/thumbnail?v=${encodeURIComponent(m.modTime)}`;
+}
+
+// coverUrl is the thumbnail of an actor's or a series' cover video.
+export function coverUrl(c: Cover): string {
+  return `${baseUrl}/api/media/${encodeURIComponent(c.id)}/thumbnail?v=${encodeURIComponent(c.modTime)}`;
+}
+
+// randomMedia is up to n items picked at random (of kind, if given): a fresh shuffle every call.
+export async function randomMedia(
+  n: number,
+  { kind, section, signal }: { kind?: MediaKind; section?: Section; signal?: AbortSignal } = {},
+): Promise<Media[]> {
+  return (await listMedia({ kind, section, sort: "random", limit: n, signal })).items;
 }
 
 // previewUrl is a video's long-press preview: a short silent montage the server cut from it. Only

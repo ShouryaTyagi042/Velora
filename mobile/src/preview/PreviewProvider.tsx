@@ -3,7 +3,7 @@ import { useVideoPlayer, type VideoPlayer } from "expo-video";
 import { createContext, useContext, useEffect } from "react";
 
 import { authHeaders } from "@/api/client";
-import { previewUrl } from "@/api/media";
+import { MediaKind, previewUrl } from "@/api/media";
 import { stopPreview, useCurrentPreview } from "./store";
 
 const PlayerContext = createContext<VideoPlayer | null>(null);
@@ -23,7 +23,8 @@ export function PreviewProvider({ children }: { children: React.ReactNode }) {
   const current = useCurrentPreview();
 
   useEffect(() => {
-    if (!current) {
+    // A comic previews by flipping its pages (ComicPreview), without the player.
+    if (!current || current.media.kind !== MediaKind.Video) {
       player.pause();
       return;
     }

@@ -5,8 +5,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { ApiError, baseUrl } from "@/api/client";
 import { useAuth } from "@/auth/AuthProvider";
 import { Button } from "@/components/Button";
+import { Gradient } from "@/components/Gradient";
 import { Text } from "@/components/Text";
-import { radius, space, touch, typography, useAppTheme } from "@/theme";
+import { gradients, radius, space, touch, typography, useAppTheme, wordmark } from "@/theme";
 
 // The login screen. There's no "create account": users are made on the server with
 // velora-admin, and the hint says so for whoever sets the app up the first time.
@@ -33,12 +34,17 @@ export default function Login() {
   const input = [styles.input, { color: colors.text, backgroundColor: colors.surface }];
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: colors.background }]}>
+      {/* The blue dusk of Home's billboard, risen to the top of the screen: the same light. */}
+      <Gradient colors={gradients.billboard} style={styles.glow} />
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.center}>
         <View style={styles.form}>
-          <Text variant="display" accessibilityRole="header">
-            Velora
+          <Text style={[wordmark, styles.mark]} color={colors.primaryText} accessibilityRole="header" accessibilityLabel="Velora">
+            VELORA
           </Text>
-          <Text muted>Sign in to your library.</Text>
+          <Text variant="display">Your films, anime and comics.</Text>
+          <Text muted style={styles.lede}>
+            Sign in to your library.
+          </Text>
 
           <TextInput
             value={username}
@@ -51,6 +57,7 @@ export default function Login() {
             textContentType="username"
             returnKeyType="next"
             onSubmitEditing={() => passwordRef.current?.focus()}
+            keyboardAppearance="dark"
             submitBehavior="submit"
             accessibilityLabel="Username"
             style={input}
@@ -66,6 +73,7 @@ export default function Login() {
             textContentType="password"
             returnKeyType="go"
             onSubmitEditing={submit}
+            keyboardAppearance="dark"
             accessibilityLabel="Password"
             style={input}
           />
@@ -78,6 +86,7 @@ export default function Login() {
             label={busy ? "Signing in…" : "Sign in"}
             onPress={submit}
             disabled={busy || username.trim() === "" || password === ""}
+            variant="play"
             haptic
           />
           <Text variant="caption" muted style={styles.hint}>
@@ -103,6 +112,9 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   center: { flex: 1, justifyContent: "center" },
   form: { padding: space.xl, gap: space.md, width: "100%", maxWidth: 420, alignSelf: "center" },
-  input: { ...typography.body, borderRadius: radius.lg, paddingHorizontal: space.md, minHeight: touch.min },
+  glow: { transform: [{ scaleY: -1 }], bottom: "45%" },
+  mark: { marginBottom: space.lg },
+  lede: { marginBottom: space.md },
+  input: { ...typography.body, borderRadius: radius.md, paddingHorizontal: space.md, minHeight: touch.min + 6 },
   hint: { textAlign: "center", marginTop: space.sm },
 });

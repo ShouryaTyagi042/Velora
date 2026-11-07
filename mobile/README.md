@@ -1,6 +1,6 @@
 # velora-mobile
 
-The Expo / React Native client for Velora: sign in, browse and search the library, play videos, read comics, and pick up where you left off. The design follows Apple's Liquid Glass: glass on the controls layer (native headers and tab bar, the player's and reader's controls), content edge to edge underneath, and solid fallbacks on Android, web, older iOS and with Reduce Transparency on.
+The Expo / React Native client for Velora: sign in, browse and search the library, play videos, read comics, and pick up where you left off. The design is a streaming service's, in Velora's own colours: one dark theme (a blue-black ink, white Play buttons, Velora blue `#1f6bff` for progress, selection and the brand), artwork edge to edge, a billboard and rails on Home, and one full-width card per row wherever videos or anime are listed. It is tuned for iOS: Liquid Glass on the controls layer (native headers and tab bar, the player's and reader's controls), with solid fallbacks on Android, web, older iOS and with Reduce Transparency on.
 
 ## Run
 
@@ -26,26 +26,41 @@ Run the server (`../server`, `make run`) first.
 src/app/_layout.tsx                 root Stack, guarded by the session: the tabs, Details, player, reader when
                                     signed in; login when not (Stack.Protected)
 src/app/login.tsx                   username and password; no signup (users are made with velora-admin)
-src/app/(tabs)/_layout.tsx          native tabs: Home, Videos, Anime, Comics, Search (glass tab bar on iOS 26)
-src/app/(tabs)/(home)/index.tsx     "/": Continue watching / reading, new videos / anime / comics; sign out in the header
-src/app/(tabs)/(videos)/videos.tsx  videos from movies/, 2 across, filtered by actor (in the URL); pull to rescan
-src/app/(tabs)/(anime)/anime.tsx    the same screen (components/VideoShelf) for anime/, filtered by series
-src/app/(tabs)/(comics)/comics.tsx  comic covers, 3 across; pull to rescan
-src/app/(tabs)/(search)/search.tsx  titles and actors, searched on the phone
-src/app/media/[id].tsx              video details: Play / Resume, series, actors (add and remove manual ones);
+src/app/(tabs)/_layout.tsx          native tabs: Home, Shorts, Actors, Anime, Search (five: a sixth would
+                                    hide behind "More" on iPhone, so Comics is reached from Home)
+src/app/(tabs)/(home)/index.tsx     "/": billboard (a random video; its preview plays after a moment), pills
+                                    (Actors, Anime, Comics, and Surprise me in the brand gradient), rails:
+                                    Continue watching, new films, actors, new anime, series, Continue reading,
+                                    comics. Pull down to refresh: every rail, and a new billboard
+src/app/(tabs)/(home)/comics.tsx    "/comics": comic covers, 3 across, A–Z / Z–A; pull to rescan
+src/app/(tabs)/(shorts)/shorts.tsx  "/shorts": vertical feed, films and anime in turn, each starting mid-video;
+                                    one shared player, tap to pause, sound toggle, Watch / Details
+src/app/(tabs)/(actors)/            "/actors": one banner per actor (their newest still); "/actor/[name]":
+                                    their videos, one per row, Shuffle play; "/videos": every film
+src/app/(tabs)/(anime)/             "/anime": one banner per series; "/series/[name]": Play / Resume and the
+                                    episode list; "/episodes": all anime
+src/app/(tabs)/(search)/search.tsx  server-side search, one result per row; recent searches when the field is
+                                    empty (src/search/history: on this device, cleared on sign-out)
+src/app/surprise.tsx                "/surprise?kind=any|film|anime|comic": a sheet with one random pick
+src/app/media/[id].tsx              video details: still edge to edge, Play / Resume, nearby episodes of its
+                                    series, cast (add and remove manual ones), more with its first actor;
                                     a comic's card opens the reader directly (navigation/openMedia)
 src/app/player/[id].tsx             expo-video with glass controls (native controls in fullscreen); resumes
 src/app/reader/[id].tsx             paged comic reader: pinch-zoom, preload, direction setting; resumes
-src/theme/                          design tokens (colours light + dark, space, radius, type roles, glass roles)
+src/theme/                          design tokens (one dark palette, gradients, space, radius, type roles,
+                                    wordmark, glass roles)
 src/api/                            getJSON/sendJSON (with the Bearer token), ApiError, Media types, URLs for
                                     streams, pages, thumbnails; authHeaders for the player and images
 src/auth/                           AuthProvider (session state, 401 → login), token in SecureStore
 src/preview/                        long-press previews: one shared muted player (PreviewProvider, around the
-                                    tabs), which card is previewing (a tiny external store), the overlay
+                                    tabs) for videos, a page flip for comics (ComicPreview: its first pages
+                                    over the cover), which card is previewing (a tiny external store)
 src/progress/                       local-first progress saves (throttled, one in flight) and launch reconcile
 src/hooks/                          useAsync, usePlayerStatus, useGlass, usePreload
-src/components/                     Text, Button, Skeleton, Surface (glass or fallback), Icon, MediaCard, Poster,
-                                    chips, Loading/Error/Empty views, PlayerControls, ComicPage
+src/components/                     Text, Button (play / primary / secondary / quiet), Skeleton, Surface, Icon,
+                                    Artwork, Poster, MediaCard (rail or wide), CoverCard, EpisodeRow, Rail,
+                                    GroupList, VideoList, chips, Loading/Error/Empty views,
+                                    PlayerControls, ComicPage
 ```
 
 Screens use components and token names only: no hex colours, no raw font sizes, no `GlassView` directly. `grep -rnE "#[0-9a-fA-F]{3,8}|fontSize|rgba\(" src | grep -v src/theme/` should find nothing.

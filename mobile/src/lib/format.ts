@@ -29,3 +29,8 @@ export function formatResolution(width: number, height: number): string {
   if ([2160, 1440, 1080, 720, 480].includes(height)) return `${height}p`;
   return `${width}×${height}`;
 }
+
+// plural is a count with its noun: "1 video", "12 videos", "3 people".
+export function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`;
+}

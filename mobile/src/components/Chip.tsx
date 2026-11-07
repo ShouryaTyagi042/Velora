@@ -1,27 +1,54 @@
+import { LinearGradient } from "expo-linear-gradient";
 import { Pressable, StyleSheet } from "react-native";
 
-import { radius, space, useAppTheme } from "@/theme";
+import { gradients, radius, space, useAppTheme } from "@/theme";
 import { Text } from "./Text";
 
-type Props = { label: string; selected?: boolean; onPress?: () => void; accessibilityLabel?: string };
+type Props = {
+  label: string;
+  selected?: boolean;
+  // featured: the one pill that should stand out from its row (Surprise me), filled with the
+  // brand's gradient instead of an outline.
+  featured?: boolean;
+  onPress?: () => void;
+  accessibilityLabel?: string;
+};
 
-// Chip is a small pill button: kind filters, actor tags, the "clear filter" chip. 32 pt tall to
-// look like a chip; hitSlop makes the tappable area the full 44.
-export function Chip({ label, selected = false, onPress, accessibilityLabel }: Props) {
+// Chip is a pill: a filter, a tag, a shortcut at the top of Home. Outlined at rest, filled with
+// Velora blue when selected. 34 pt tall to look like a chip; hitSlop makes the target 44.
+export function Chip({ label, selected = false, featured = false, onPress, accessibilityLabel }: Props) {
   const { colors } = useAppTheme();
+  if (featured) {
+    return (
+      <Pressable
+        onPress={onPress}
+        disabled={!onPress}
+        hitSlop={{ top: 5, bottom: 5 }}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel}
+        style={({ pressed }) => pressed && styles.pressed}
+      >
+        <LinearGradient colors={gradients.surprise} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.chip, styles.featured]}>
+          <Text variant="label" color={colors.onPrimary} style={styles.featuredLabel}>
+            {label}
+          </Text>
+        </LinearGradient>
+      </Pressable>
+    );
+  }
   return (
     <Pressable
       onPress={onPress}
       disabled={!onPress}
-      hitSlop={{ top: 6, bottom: 6 }}
+      hitSlop={{ top: 5, bottom: 5 }}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ selected }}
       style={({ pressed }) => [
         styles.chip,
-        { borderColor: selected ? colors.primary : colors.border },
+        { borderColor: selected ? colors.primary : colors.chipBorder },
         selected && { backgroundColor: colors.primary },
-        pressed && styles.pressed,
+        pressed && { backgroundColor: selected ? colors.primary : colors.surfaceRaised },
       ]}
     >
       <Text variant="label" color={selected ? colors.onPrimary : colors.text}>
@@ -33,11 +60,13 @@ export function Chip({ label, selected = false, onPress, accessibilityLabel }: P
 
 const styles = StyleSheet.create({
   chip: {
-    minHeight: 32,
+    minHeight: 34,
     justifyContent: "center",
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderWidth: 1,
     borderRadius: radius.pill,
-    paddingHorizontal: space.md,
+    paddingHorizontal: space.md + 2,
   },
-  pressed: { opacity: 0.6 },
+  featured: { borderColor: "transparent", overflow: "hidden" },
+  featuredLabel: { fontWeight: "800" },
+  pressed: { opacity: 0.75 },
 });

@@ -1,24 +1,22 @@
-import { DarkTheme, DefaultTheme, type Theme } from "expo-router";
-import { useColorScheme } from "react-native";
+import { DarkTheme, type Theme } from "expo-router";
 
 import { palette, type Colors } from "./tokens";
 
-// useAppTheme is the app's colours for the current light/dark setting.
-export function useAppTheme(): { colors: Colors; dark: boolean } {
-  const dark = useColorScheme() === "dark";
-  return { colors: dark ? palette.dark : palette.light, dark };
+// useAppTheme is the app's colours. Velora has one theme, dark (app.json sets
+// userInterfaceStyle "dark" so system UI agrees); this stays a hook so a second theme could
+// return without touching any screen.
+export function useAppTheme(): { colors: Colors; dark: true } {
+  return { colors: palette.dark, dark: true };
 }
 
-// navigationTheme builds the router's theme (headers, tab bar) from the same tokens, so the
-// header and the screens under it can never disagree.
-export function navigationTheme(dark: boolean): Theme {
-  const base = dark ? DarkTheme : DefaultTheme;
-  const c = dark ? palette.dark : palette.light;
+// navigationTheme builds the router's theme (headers, tab bar) from the same tokens.
+export function navigationTheme(): Theme {
+  const c = palette.dark;
   return {
-    ...base,
+    ...DarkTheme,
     colors: {
-      ...base.colors,
-      primary: c.primary,
+      ...DarkTheme.colors,
+      primary: c.primaryText,
       background: c.background,
       card: c.background,
       text: c.text,

@@ -3,6 +3,7 @@ import { createContext, use, useEffect, useState, type ReactNode } from "react";
 import { login, logout, me, type User } from "@/api/auth";
 import { setToken, setUnauthorizedHandler } from "@/api/client";
 import { clearLocal } from "@/progress/store";
+import { clearHistory } from "@/search/history";
 import { reconcile } from "@/progress/sync";
 import { clearToken, loadToken, saveToken } from "./token";
 
@@ -69,6 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await reconcile(); // last chance for unsynced saves; they're cleared below
     await logout().catch(() => {}); // offline: the session expires on its own within 30 days
     setToken(null);
+    clearHistory(); // recent searches are the person's, not the phone's
     await Promise.all([clearToken(), clearLocal()]);
     setState({ status: "signedOut" });
   };
