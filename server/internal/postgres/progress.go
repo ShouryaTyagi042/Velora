@@ -71,9 +71,10 @@ func (r *MediaRepo) SaveProgress(ctx context.Context, user int64, id string, p m
 // reusable one. As a literal, the statement is planned once per connection and reused. The
 // limit is an int, never text, so this can't inject anything. (measured in phase 12: ADR 009)
 func (r *MediaRepo) Continue(ctx context.Context, user int64, kind media.Kind, limit int) ([]media.Media, error) {
-	filter := ` and wp.media_id is not null and not wp.completed order by wp.updated_at desc, m.id`
+	// Never what's in the bin: it's on its way out.
+	filter := ` and not m.in_bin and wp.media_id is not null and not wp.completed order by wp.updated_at desc, m.id`
 	if kind == media.KindComic {
-		filter = ` and rp.media_id is not null and not rp.completed order by rp.updated_at desc, m.id`
+		filter = ` and not m.in_bin and rp.media_id is not null and not rp.completed order by rp.updated_at desc, m.id`
 	}
 	filter += ` limit ` + strconv.Itoa(limit)
 	rows, err := r.db.QueryContext(ctx, selectMedia+filter, user)

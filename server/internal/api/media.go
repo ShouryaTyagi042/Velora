@@ -25,7 +25,7 @@ const (
 	maxLimit     = 200
 )
 
-// listMedia handles GET /api/media?kind=video|comic&section=movies|anime&series=<name>&actor=<name>&q=<text>&sort=title|title_desc|recent|random&clip=preview|short
+// listMedia handles GET /api/media?kind=video|comic&section=movies|anime&series=<name>&actor=<name>&q=<text>&sort=title|title_desc|recent|random|binned&clip=preview|short&tag=<name>&favourites=true&bin=true
 // &limit=<n>&after=<cursor>: one page of the library.
 //
 // Every request is a page. Before phase 12 this returned the whole library: at 100k items that was
@@ -58,6 +58,13 @@ func listMedia(repo media.Repository) HandlerE {
 		default:
 			return validationError("clip must be %q or %q", media.ClipPreview, media.ClipShort)
 		}
+		f.InBin = q.Get("bin") == "true"
+		f.Favourites = q.Get("favourites") == "true"
+		if q.Has("tag") {
+			if f.Tag = media.NormalizeTag(q.Get("tag")); f.Tag == "" || len(f.Tag) > maxFilterLen {
+				return validationError("tag must be non-empty and at most %d bytes", maxFilterLen)
+			}
+		}
 		f.Query = strings.TrimSpace(q.Get("q")) // an empty search is no search
 		if len(f.Actor) > maxFilterLen || len(f.Query) > maxFilterLen {
 			return validationError("actor and q must be at most %d bytes", maxFilterLen)
@@ -71,8 +78,13 @@ func listMedia(repo media.Repository) HandlerE {
 			f.Sort = media.SortRecent
 		case "random":
 			f.Sort = media.SortRandom
+		case "binned":
+			if !f.InBin {
+				return validationError(`sort=binned lists the bin: add bin=true`)
+			}
+			f.Sort = media.SortBinned
 		default:
-			return validationError(`sort must be "title", "title_desc", "recent" or "random"`)
+			return validationError(`sort must be "title", "title_desc", "recent", "random" or "binned"`)
 		}
 		if s := q.Get("limit"); s != "" {
 			n, err := strconv.Atoi(s)
@@ -147,6 +159,8 @@ func decodeCursor(c string, s media.Sort) (string, bool) {
 
 func sortName(s media.Sort) string {
 	switch s {
+	case media.SortBinned:
+		return "binned"
 	case media.SortRecent:
 		return "recent"
 	case media.SortTitleDesc:

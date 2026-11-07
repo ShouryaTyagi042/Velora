@@ -15,6 +15,7 @@ import { useAsync } from "@/hooks/useAsync";
 import { usePreload } from "@/hooks/usePreload";
 import { loadWithProgress, resumePage } from "@/progress/resume";
 import { useProgressSync } from "@/progress/useProgressSync";
+import { useViewOnce } from "@/progress/views";
 import { useReaderSettings } from "@/reader/settings";
 import { onMedia, space, touch, typography } from "@/theme";
 
@@ -41,6 +42,7 @@ function Reader({ comic, pageCount }: { comic: Media; pageCount: number }) {
   const horizontal = direction === "horizontal";
 
   const [page, setPage] = useState(() => resumePage(comic));
+  const view = useViewOnce(comic.id);
   const sync = useProgressSync(comic.id);
   const [chrome, setChrome] = useState(true); // the top and bottom bars
   const [zoomed, setZoomed] = useState(false);
@@ -55,6 +57,7 @@ function Reader({ comic, pageCount }: { comic: Media; pageCount: number }) {
     const n = Math.min(pageCount - 1, Math.max(0, Math.round(offset / size)));
     if (n === page) return;
     setPage(n);
+    if (n === pageCount - 1) view(); // read to the last page: a view
     // A page turn is a discrete event, not a stream: save each one (one request in flight at a time).
     sync.save({ page: n, pageCount }, { force: true });
   };
@@ -121,6 +124,17 @@ function Reader({ comic, pageCount }: { comic: Media; pageCount: number }) {
             ) : (
               <Icon sf="arrow.left.and.right" md="swap_horiz" size={18} color={FG} />
             )}
+          </Surface>
+        </Pressable>
+        {/* The comic's details: favourite it, or move it to the bin. */}
+        <Pressable
+          onPress={() => router.push({ pathname: "/media/[id]", params: { id: comic.id } })}
+          accessibilityRole="button"
+          accessibilityLabel="Details: favourite or move to the bin"
+          hitSlop={8}
+        >
+          <Surface role="control" visible={chrome} colorScheme="dark" style={styles.round}>
+            <Icon sf="info.circle" md="info" size={18} color={FG} />
           </Surface>
         </Pressable>
       </Animated.View>

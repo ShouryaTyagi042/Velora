@@ -53,7 +53,7 @@ func emptyDB(t *testing.T) *sql.DB {
 	if testDB == nil {
 		t.Skip("VELORA_TEST_DSN not set")
 	}
-	if _, err := testDB.Exec(`truncate media, actors, users restart identity cascade`); err != nil {
+	if _, err := testDB.Exec(`truncate media, actors, tags, users restart identity cascade`); err != nil {
 		t.Fatal(err)
 	}
 	return testDB

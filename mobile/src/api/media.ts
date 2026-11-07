@@ -60,6 +60,11 @@ export type Media = {
   comic?: { pageCount: number }; // comics only
   video?: VideoMeta; // videos only, once extracted
   progress?: Progress; // once started
+  tags?: string[]; // videos only, lowercase; absent when there are none
+  favourite?: boolean; // the signed-in user's favourite
+  views: number; // times watched (videos) or read to the last page (comics), by anyone
+  inBin?: boolean; // moved to the bin: hidden everywhere but the bin until restored or deleted
+  binnedAt?: string; // RFC 3339, while in the bin
 };
 
 export type ListOptions = {
@@ -68,10 +73,13 @@ export type ListOptions = {
   series?: string; // episodes of this anime series only (exact name)
   actor?: string;
   clip?: "preview" | "short"; // only videos whose clip of this kind is ready
+  tag?: string; // only videos with this tag
+  favourites?: boolean; // only the signed-in user's favourites
+  bin?: boolean; // only what's in the bin (everything else leaves it out)
   q?: string; // search titles and actors, ignoring case and accents
   // title (A to Z, natural: 2 before 10) by default. random is a new shuffle every call, with no
   // next page: ask again for more (Surprise me, Shorts).
-  sort?: "title" | "title_desc" | "recent" | "random";
+  sort?: "title" | "title_desc" | "recent" | "random" | "binned"; // binned: the bin's order, with bin
   limit?: number; // the server's default is 50, its maximum 200
   after?: string; // the previous page's nextCursor
   signal?: AbortSignal;
@@ -83,13 +91,16 @@ export type Page<T> = { items: T[]; nextCursor: string | null };
 // listMedia is one page of the library. The server never sends the whole thing: at 100k items that
 // was 33 MB for a screen showing a dozen cards (phase 12).
 export function listMedia(options: ListOptions = {}): Promise<Page<Media>> {
-  const { kind, section, series, actor, clip, q, sort, limit, after, signal } = options;
+  const { kind, section, series, actor, clip, tag, favourites, bin, q, sort, limit, after, signal } = options;
   const params = new URLSearchParams();
   if (kind) params.set("kind", kind);
   if (section) params.set("section", section);
   if (series) params.set("series", series);
   if (actor) params.set("actor", actor);
   if (clip) params.set("clip", clip);
+  if (tag) params.set("tag", tag);
+  if (favourites) params.set("favourites", "true");
+  if (bin) params.set("bin", "true");
   if (q) params.set("q", q);
   if (sort) params.set("sort", sort);
   if (limit) params.set("limit", String(limit));
@@ -118,6 +129,60 @@ export function removeActor(id: string, name: string): Promise<void> {
 // series' first episode. Absent while none of them has a thumbnail yet.
 export type Cover = { id: string; modTime: string };
 
+// The bin. Moving to the bin only marks an item: it leaves every list but the bin, keeping its
+// files, progress, tags and actors. Restoring brings it back as it was. Deleting (only from the
+// bin) removes its files from the server for good.
+export function moveToBin(id: string): Promise<Media> {
+  return sendJSON<Media>("POST", `/api/media/${encodeURIComponent(id)}/bin`);
+}
+
+export function restoreFromBin(id: string): Promise<Media> {
+  return sendJSON<Media>("DELETE", `/api/media/${encodeURIComponent(id)}/bin`);
+}
+
+export function deleteForever(id: string): Promise<void> {
+  return sendJSON<void>("DELETE", `/api/media/${encodeURIComponent(id)}`);
+}
+
+// emptyBin deletes everything in the bin. failed are items whose files the server couldn't remove:
+// they stay in the bin.
+// With kind or section, only what's of that kind or section is deleted.
+export function emptyBin({ kind, section }: { kind?: MediaKind; section?: Section } = {}): Promise<{ deleted: number; failed: number }> {
+  const params = new URLSearchParams();
+  if (kind) params.set("kind", kind);
+  if (section) params.set("section", section);
+  const qs = params.toString();
+  return sendJSON("DELETE", `/api/bin${qs ? `?${qs}` : ""}`);
+}
+
+// setFavourite adds an item to the signed-in user's favourites, or removes it; the answer is the item.
+export function setFavourite(id: string, on: boolean): Promise<Media> {
+  return sendJSON<Media>(on ? "PUT" : "DELETE", `/api/media/${encodeURIComponent(id)}/favourite`);
+}
+
+// addTag tags a video (the server lowercases and trims); removeTag untags it. Both answer with the video.
+export function addTag(id: string, name: string): Promise<Media> {
+  return sendJSON<Media>("POST", `/api/media/${encodeURIComponent(id)}/tags`, { name });
+}
+
+export function removeTag(id: string, name: string): Promise<Media> {
+  return sendJSON<Media>("DELETE", `/api/media/${encodeURIComponent(id)}/tags/${encodeURIComponent(name)}`);
+}
+
+// recordView counts a view: the player calls it past 30 s of watching (or at the end of a shorter
+// video), the reader on reaching the last page. The server treats the same person's repeat within
+// half an hour as the same view (counted: false).
+export function recordView(id: string): Promise<{ views: number; counted: boolean }> {
+  return sendJSON("POST", `/api/media/${encodeURIComponent(id)}/views`);
+}
+
+export type TagCount = { name: string; videoCount: number };
+
+// listTags is every tag in use; with section, counting only that shelf's videos.
+export async function listTags({ section, signal }: { section?: Section; signal?: AbortSignal } = {}): Promise<TagCount[]> {
+  return (await getJSON<{ items: TagCount[] }>(`/api/tags${section ? `?section=${section}` : ""}`, { signal })).items;
+}
+
 export type ActorCount = { name: string; videoCount: number; cover?: Cover };
 
 // listActors is every actor with at least one available video (in section, if given), by name.
@@ -142,8 +207,14 @@ export type Job = {
   name: string;
   status: "running" | "done" | "failed" | "canceled";
   progress?: { done: number; total: number };
+  result?: ScanResult; // a finished scan's
   error?: string;
+  finishedAt?: string;
 };
+
+// ScanResult is what a finished scan found: every item on disk, and how many it newly marked
+// missing (their files are gone).
+export type ScanResult = { found: number; missing: number; warnings: string[] };
 
 // scanLibrary asks the server to rescan its folder (new, renamed and removed files). It answers
 // at once with the scan's job, before the scan is done: getJob says when it is. If a scan is

@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { listActors, listMedia, listSeries, MediaKind, randomMedia, Section, type ActorCount, type Media, type SeriesCount } from "@/api/media";
 import { getContinue } from "@/api/progress";
-import { SignOutButton } from "@/auth/SignOutButton";
+import { ProfileButton } from "@/auth/ProfileButton";
 import { Button } from "@/components/Button";
 import { Chip } from "@/components/Chip";
 import { CoverCard } from "@/components/CoverCard";
@@ -48,15 +48,17 @@ const fetchBillboard = async (signal: AbortSignal) => {
 // what it draws.
 const fetchHome = async (signal: AbortSignal) => {
   const recent = (kind: MediaKind, section?: Section) => listMedia({ kind, section, sort: "recent", limit: RECENT, signal });
-  const [films, anime, comics, cont, actors, series] = await Promise.all([
+  const [films, anime, comics, cont, actors, series, favourites] = await Promise.all([
     recent(MediaKind.Video, Section.Movies),
     recent(MediaKind.Video, Section.Anime),
     recent(MediaKind.Comic),
     getContinue({ signal }),
     listActors({ section: Section.Movies, signal }),
     listSeries({ signal }),
+    listMedia({ favourites: true, sort: "recent", limit: RECENT, signal }),
   ]);
   return {
+    favourites: favourites.items,
     films: films.items,
     anime: anime.items,
     comics: comics.items,
@@ -75,6 +77,7 @@ const details = (m: Media) => router.push({ pathname: "/media/[id]", params: { i
 const still = (m: Media) => <MediaCard media={m} onPress={openMedia} style={styles.card} />;
 const resume = (m: Media) => <MediaCard media={m} onPress={play} style={m.kind === MediaKind.Comic ? styles.cover : styles.card} />;
 const cover = (m: Media) => <MediaCard media={m} onPress={openMedia} style={styles.cover} />;
+const favourite = (m: Media) => <MediaCard media={m} onPress={openMedia} style={m.kind === MediaKind.Comic ? styles.cover : styles.card} />;
 const actor = (a: ActorCount) => (
   <CoverCard
     layout="tile"
@@ -164,6 +167,7 @@ export default function Home() {
             {pick ? <Billboard media={pick} /> : <View style={styles.headerSpace} />}
             <View style={styles.rails}>
               <Rail title="Continue watching" items={d.watching} keyOf={(m) => m.id} render={resume} />
+              <Rail title="Your favourites" items={d.favourites} keyOf={(m) => m.id} render={favourite} seeAll="/favourites" />
               <Rail title="New films" items={d.films} keyOf={(m) => m.id} render={still} seeAll="/videos" />
               <Rail title="Actors" items={d.actors} keyOf={(a) => a.name} render={actor} seeAll="/actors" />
               <Rail title="New anime" items={d.anime} keyOf={(m) => m.id} render={still} seeAll="/episodes" />
@@ -195,13 +199,14 @@ function HomeHeader({ scrollY }: { scrollY: { get: () => number } }) {
         <Text style={wordmark} color={colors.primaryText} accessibilityRole="header" accessibilityLabel="Velora">
           VELORA
         </Text>
-        <SignOutButton />
+        <ProfileButton />
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pills}>
+        <Chip label="Surprise me" featured onPress={() => router.push({ pathname: "/surprise", params: { kind: "any" } })} />
+        <Chip label="Favourites" onPress={() => router.push("/favourites")} />
         <Chip label="Actors" onPress={() => router.navigate("/actors")} />
         <Chip label="Anime" onPress={() => router.navigate("/anime")} />
         <Chip label="Comics" onPress={() => router.push("/comics")} />
-        <Chip label="Surprise me" featured onPress={() => router.push({ pathname: "/surprise", params: { kind: "any" } })} />
       </ScrollView>
     </Animated.View>
   );

@@ -8,6 +8,7 @@ import { CoverCard } from "@/components/CoverCard";
 import { GroupList } from "@/components/GroupList";
 import { Text } from "@/components/Text";
 import { useAsync } from "@/hooks/useAsync";
+import { useRefetchOnLibraryChange } from "@/hooks/useLibraryChanges";
 import { useRescan } from "@/hooks/useRescan";
 import { plural } from "@/lib/format";
 import { space } from "@/theme";
@@ -27,6 +28,7 @@ const fetchActors = async (signal: AbortSignal) => {
 export default function Actors() {
   const { state, refreshing, refetch } = useAsync(fetchActors);
   const { scanning, rescan } = useRescan(refetch);
+  useRefetchOnLibraryChange(refetch);
   const actors = state.status === "ok" ? { status: "ok" as const, data: state.data.actors } : state;
   const count = state.status === "ok" ? state.data.actors.length : 0;
 

@@ -17,7 +17,8 @@ const colors = {
   primary: "#1f6bff", // Velora blue: fills (progress, selected chips, the brand). 4.6:1 behind white text
   primaryText: "#6ea4ff", // the blue as text or an icon on the dark base: 7.6:1
   onPrimary: "#ffffff",
-  danger: "#ff5a5f",
+  danger: "#ff5a5f", // as text or an icon: 6.3:1
+  dangerFill: "#c9343a", // a destructive button's fill: 4.9:1 behind white text
   posterVideo: "#111a2e", // a poster before its thumbnail arrives
   posterComic: "#1d1628",
   skeleton: "#141a26",
@@ -26,6 +27,7 @@ const colors = {
   onPlay: "#05070c",
   secondaryFill: "rgba(120, 132, 158, 0.32)", // "Details": quiet, translucent over artwork
   chipBorder: "rgba(245, 247, 251, 0.32)", // an unselected pill's outline, over artwork or the page
+  binTint: "rgba(201, 52, 58, 0.14)", // the "in the bin" banner's wash
 };
 
 export type Colors = typeof colors;

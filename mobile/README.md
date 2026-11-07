@@ -33,6 +33,14 @@ src/app/(tabs)/(home)/index.tsx     "/": billboard (a random video; its preview 
                                     Continue watching, new films, actors, new anime, series, Continue reading,
                                     comics. Pull down to refresh: every rail, and a new billboard
 src/app/(tabs)/(home)/comics.tsx    "/comics": comic covers, 3 across, A–Z / Z–A; pull to rescan
+src/app/(tabs)/(home)/me.tsx        "/me" (the initial in Home's header): Favourites, Tags, Bin with counts;
+                                    sign out (asks first)
+src/app/(tabs)/(home)/favourites.tsx "/favourites?type=": All (comics rail over videos), Videos, Anime (one per
+                                    row), Comics (covers, 3 across); Bin, Tags and tag pages take ?type= too
+                                    (components/TypeFilter, lib/mediaType)
+src/app/(tabs)/(home)/tags.tsx      "/tags": every tag with its count, most used first
+src/app/(tabs)/(home)/bin.tsx       "/bin": binned items; Restore, Delete (asks), Empty bin (asks)
+src/app/tag/[name].tsx              "/tag/[name]": every video with a tag, over the tabs
 src/app/(tabs)/(shorts)/shorts.tsx  "/shorts": vertical feed of server-cut clips (the Shorts clip, else the
                                     long-press preview) and comics as stories (10 pages from past 60%), Mix /
                                     Videos / Anime / Comics; the page on screen and its
@@ -45,8 +53,10 @@ src/app/(tabs)/(anime)/             "/anime": one banner per series; "/series/[n
 src/app/(tabs)/(search)/search.tsx  server-side search, one result per row; recent searches when the field is
                                     empty (src/search/history: on this device, cleared on sign-out)
 src/app/surprise.tsx                "/surprise?kind=any|film|anime|comic": a sheet with one random pick
-src/app/media/[id].tsx              video details: still edge to edge, Play / Resume, nearby episodes of its
-                                    series, cast (add and remove manual ones), more with its first actor;
+src/app/media/[id].tsx              details: still edge to edge, Play / Resume, Favourite / Tag / Move to bin,
+                                    an "In the bin" banner (Restore, Delete forever), nearby episodes, cast,
+                                    tags (add, remove), more with its first actor. Comics reach it from the
+                                    reader's info button;
                                     a comic's card opens the reader directly (navigation/openMedia)
 src/app/player/[id].tsx             expo-video with glass controls (native controls in fullscreen); resumes
 src/app/reader/[id].tsx             paged comic reader: pinch-zoom, preload, direction setting; resumes

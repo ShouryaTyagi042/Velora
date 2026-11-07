@@ -2,6 +2,7 @@ package media
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -35,6 +36,44 @@ type Repository interface {
 	SaveProgress(ctx context.Context, user int64, id string, p Progress) (Progress, error)
 	// Continue returns up to limit items of kind with user's unfinished progress, most recent first.
 	Continue(ctx context.Context, user int64, kind Kind, limit int) ([]Media, error)
+
+	// SetInBin moves an item to the bin (true) or restores it (false), and returns it. Doing what
+	// is already true is a no-op. ErrNotFound for an unknown id.
+	SetInBin(ctx context.Context, user int64, id string, inBin bool) (Media, error)
+	// Delete removes an item from the database for good: its progress, favourites, actor and tag
+	// links go with it. Only an item in the bin: ErrNotInBin otherwise. The caller removes its
+	// files first.
+	Delete(ctx context.Context, id string) error
+	// SetFavourite adds an item to user's favourites (true) or removes it, and returns it.
+	SetFavourite(ctx context.Context, user int64, id string, favourite bool) (Media, error)
+	// AddTag tags a video (name is already normalised: NormalizeTag) and returns it; RemoveTag
+	// untags it. ErrNotVideo for a comic. Adding a tag it has, or removing one it hasn't, is a no-op.
+	AddTag(ctx context.Context, user int64, id, name string) (Media, error)
+	RemoveTag(ctx context.Context, user int64, id, name string) (Media, error)
+	// ListTags returns every tag on at least one available video in section ("" for any), with
+	// how many of that section's videos have it, by name.
+	ListTags(ctx context.Context, section Section) ([]TagCount, error)
+
+	// RecordView counts a view of an item by user, unless the same user's last view of it was
+	// less than ViewWindow before at: then it's the same view (a retry, a reopened player) and
+	// counted is false. It returns the item's views afterwards. ErrNotFound for an unknown id.
+	RecordView(ctx context.Context, user int64, id string, at time.Time) (views int, counted bool, err error)
+}
+
+// ViewWindow is how long after a view the same person's next view of the same item is still that
+// view: long enough to absorb retries and a quick reopen, short enough that watching it again
+// tonight counts.
+const ViewWindow = 30 * time.Minute
+
+// NormalizeTag is how a tag is stored and matched: trimmed, inner spaces collapsed, lowercase.
+func NormalizeTag(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(s), " "))
+}
+
+// TagCount is one row of GET /api/tags.
+type TagCount struct {
+	Name       string `json:"name"`
+	VideoCount int    `json:"videoCount"`
 }
 
 // Syncer is what a scan needs: make the stored library match what's on disk.
@@ -52,7 +91,13 @@ type ListFilter struct {
 	Series  string  // anime episodes of this series only (exact name); "" for all
 	Actor   string  // exact name, any source; "" for all
 	Clip    Clip    // only videos whose clip of this kind is ready; "" for all
-	// Query matches a title, an actor's name or an anime series containing it, ignoring case and accents
+	Tag     string  // only videos with this tag (normalised); "" for all
+	// Favourites lists only the requesting user's favourites.
+	Favourites bool
+	// InBin lists only what's in the bin. Without it, binned items are left out: every other list
+	// in the app is one where a binned item must not appear.
+	InBin bool
+	// Query matches a title, an actor's name, a tag or an anime series containing it, ignoring case and accents
 	// ("amelie" finds "Amélie"). "" for all.
 	Query string
 	Sort  Sort
@@ -83,11 +128,13 @@ const (
 	// SortRandom is a fresh shuffle on every call (Surprise me, Shorts). It has no next page: a
 	// cursor can't continue a shuffle, so callers ask again for more.
 	SortRandom Sort = "random"
+	// SortBinned is the bin's order: most recently binned first. Only with InBin.
+	SortBinned Sort = "binned"
 )
 
 // Valid reports whether s is a known order.
 func (s Sort) Valid() bool {
-	return s == SortTitle || s == SortTitleDesc || s == SortRecent || s == SortRandom
+	return s == SortTitle || s == SortTitleDesc || s == SortRecent || s == SortRandom || s == SortBinned
 }
 
 // ActorCount is one row of GET /api/actors.

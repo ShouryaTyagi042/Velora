@@ -27,9 +27,12 @@ type entry struct {
 // Store holds media in a map guarded by a read/write mutex,
 // so readers (handlers) and the writer (a scan) can share it.
 type Store struct {
-	mu       sync.RWMutex
-	items    map[string]*entry              // by ID
-	progress map[progressKey]media.Progress // per user and item
+	mu         sync.RWMutex
+	items      map[string]*entry              // by ID
+	progress   map[progressKey]media.Progress // per user and item
+	favourites map[progressKey]time.Time      // per user and item: when it was added
+	views      map[string]int                 // per item
+	lastView   map[progressKey]time.Time      // per user and item: their latest counted view
 }
 
 type progressKey struct {
@@ -39,7 +42,8 @@ type progressKey struct {
 
 // New returns a Store seeded with the given media.
 func New(seed []media.Media) *Store {
-	s := &Store{items: make(map[string]*entry, len(seed)), progress: map[progressKey]media.Progress{}}
+	s := &Store{items: make(map[string]*entry, len(seed)), progress: map[progressKey]media.Progress{}, favourites: map[progressKey]time.Time{},
+		views: map[string]int{}, lastView: map[progressKey]time.Time{}}
 	for _, m := range seed {
 		m.Section = media.SectionOf(m.Kind, m.RelPath)
 		m.Series = media.SeriesOf(m.Kind, m.RelPath)
@@ -64,6 +68,7 @@ func (s *Store) Sync(ctx context.Context, items []media.Media, scannedAt time.Ti
 		if old, ok := s.items[m.ID]; ok {
 			m.AddedAt = old.m.AddedAt
 			m.Actors = mergeActors(m.Actors, old.m.Actors)
+			m.Tags, m.InBin, m.BinnedAt = old.m.Tags, old.m.InBin, old.m.BinnedAt // the scanner doesn't own these
 		} else {
 			m.AddedAt = scannedAt
 		}
@@ -85,6 +90,8 @@ func (s *Store) Sync(ctx context.Context, items []media.Media, scannedAt time.Ti
 func (s *Store) List(ctx context.Context, user int64, f media.ListFilter) ([]media.Media, error) {
 	order := byTitle
 	switch f.Sort {
+	case media.SortBinned:
+		order = byBinned
 	case media.SortRecent:
 		order = byRecent
 	case media.SortTitleDesc:
@@ -107,6 +114,8 @@ func (s *Store) List(ctx context.Context, user int64, f media.ListFilter) ([]med
 	for _, e := range s.items {
 		if e.missing || (f.Kind != "" && e.m.Kind != f.Kind) || (f.Section != "" && e.m.Section != f.Section) ||
 			(f.Series != "" && e.m.Series != f.Series) || (f.Actor != "" && !e.m.HasActor(f.Actor)) || !hasClip(e.m, f.Clip) ||
+			e.m.InBin != f.InBin || (f.Tag != "" && !slices.Contains(e.m.Tags, f.Tag)) ||
+			(f.Favourites && !s.isFavourite(user, e.m.ID)) ||
 			(q != "" && !matches(e.m, q)) || (after != nil && order(e.m, *after) <= 0) {
 			continue
 		}
@@ -141,6 +150,15 @@ func byTitle(a, b media.Media) int {
 	return cmp.Or(strings.Compare(media.TitleKey(a.Title), media.TitleKey(b.Title)), strings.Compare(a.ID, b.ID))
 }
 
+func byBinned(a, b media.Media) int {
+	if a.BinnedAt != nil && b.BinnedAt != nil {
+		if c := b.BinnedAt.Compare(*a.BinnedAt); c != 0 {
+			return c
+		}
+	}
+	return strings.Compare(b.ID, a.ID)
+}
+
 func byRecent(a, b media.Media) int {
 	return cmp.Or(b.AddedAt.Compare(a.AddedAt), strings.Compare(b.ID, a.ID))
 }
@@ -153,6 +171,11 @@ func matches(m media.Media, q string) bool {
 	}
 	for _, a := range m.Actors {
 		if strings.Contains(media.Fold(a.Name), q) {
+			return true
+		}
+	}
+	for _, t := range m.Tags {
+		if strings.Contains(media.Fold(t), q) {
 			return true
 		}
 	}
@@ -171,12 +194,36 @@ func (s *Store) Get(ctx context.Context, user int64, id string) (media.Media, er
 	return s.withProgress(user, e.m), nil
 }
 
-// withProgress returns m with user's saved progress, if any. Callers hold s.mu.
+// withProgress returns m with user's saved progress, if any, and whether it's their favourite.
+// Callers hold s.mu.
 func (s *Store) withProgress(user int64, m media.Media) media.Media {
 	if p, ok := s.progress[progressKey{user, m.ID}]; ok {
 		m.Progress = &p
 	}
+	m.Favourite = s.isFavourite(user, m.ID)
+	m.Views = s.views[m.ID]
 	return m
+}
+
+// RecordView implements media.Repository.
+func (s *Store) RecordView(ctx context.Context, user int64, id string, at time.Time) (int, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e, ok := s.items[id]; !ok || e.missing {
+		return 0, false, media.ErrNotFound
+	}
+	k := progressKey{user, id}
+	if last, ok := s.lastView[k]; ok && at.Sub(last) < media.ViewWindow {
+		return s.views[id], false, nil
+	}
+	s.lastView[k] = at
+	s.views[id]++
+	return s.views[id], true, nil
+}
+
+func (s *Store) isFavourite(user int64, id string) bool {
+	_, ok := s.favourites[progressKey{user, id}]
+	return ok
 }
 
 // SaveProgress implements media.Repository: the newer save wins.
@@ -201,7 +248,7 @@ func (s *Store) Continue(ctx context.Context, user int64, kind media.Kind, limit
 	out := []media.Media{}
 	for k, p := range s.progress {
 		e := s.items[k.id]
-		if k.user != user || e == nil || e.missing || e.m.Kind != kind || p.Completed {
+		if k.user != user || e == nil || e.missing || e.m.InBin || e.m.Kind != kind || p.Completed {
 			continue
 		}
 		out = append(out, s.withProgress(user, e.m))
@@ -220,7 +267,7 @@ func (s *Store) ListActors(ctx context.Context, section media.Section) ([]media.
 	counts := map[string]int{}
 	covers := map[string]media.Media{} // the newest video with a thumbnail, as in Postgres
 	for _, e := range s.items {
-		if e.missing || e.m.Kind != media.KindVideo || (section != "" && e.m.Section != section) {
+		if e.missing || e.m.InBin || e.m.Kind != media.KindVideo || (section != "" && e.m.Section != section) {
 			continue
 		}
 		for _, a := range e.m.Actors {
@@ -246,7 +293,7 @@ func (s *Store) ListSeries(ctx context.Context) ([]media.SeriesCount, error) {
 	counts := map[string]int{}
 	covers := map[string]media.Media{} // the first episode by title with a thumbnail
 	for _, e := range s.items {
-		if !e.missing && e.m.Series != "" {
+		if !e.missing && !e.m.InBin && e.m.Series != "" {
 			counts[e.m.Series]++
 			if c, ok := covers[e.m.Series]; e.m.Video != nil && (!ok || byTitle(e.m, c) < 0) {
 				covers[e.m.Series] = e.m
@@ -313,6 +360,129 @@ func (s *Store) RemoveActor(ctx context.Context, id, name string) error {
 		e.m.Actors = nil
 	}
 	return nil
+}
+
+// SetInBin implements media.Repository.
+func (s *Store) SetInBin(ctx context.Context, user int64, id string, inBin bool) (media.Media, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.items[id]
+	if !ok || e.missing {
+		return media.Media{}, media.ErrNotFound
+	}
+	switch {
+	case inBin && !e.m.InBin:
+		now := time.Now()
+		e.m.InBin, e.m.BinnedAt = true, &now
+	case !inBin:
+		e.m.InBin, e.m.BinnedAt = false, nil
+	}
+	return s.withProgress(user, e.m), nil
+}
+
+// Delete implements media.Repository.
+func (s *Store) Delete(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.items[id]
+	switch {
+	case !ok:
+		return media.ErrNotFound
+	case !e.m.InBin:
+		return media.ErrNotInBin
+	}
+	delete(s.items, id)
+	for k := range s.progress {
+		if k.id == id {
+			delete(s.progress, k)
+		}
+	}
+	for k := range s.favourites {
+		if k.id == id {
+			delete(s.favourites, k)
+		}
+	}
+	for k := range s.lastView {
+		if k.id == id {
+			delete(s.lastView, k)
+		}
+	}
+	delete(s.views, id)
+	return nil
+}
+
+// SetFavourite implements media.Repository.
+func (s *Store) SetFavourite(ctx context.Context, user int64, id string, favourite bool) (media.Media, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.items[id]
+	if !ok || e.missing {
+		return media.Media{}, media.ErrNotFound
+	}
+	k := progressKey{user, id}
+	if _, has := s.favourites[k]; favourite && !has {
+		s.favourites[k] = time.Now()
+	} else if !favourite {
+		delete(s.favourites, k)
+	}
+	return s.withProgress(user, e.m), nil
+}
+
+// AddTag implements media.Repository.
+func (s *Store) AddTag(ctx context.Context, user int64, id, name string) (media.Media, error) {
+	return s.changeTags(user, id, func(tags []string) []string {
+		if slices.Contains(tags, name) {
+			return tags
+		}
+		out := append(slices.Clone(tags), name)
+		slices.Sort(out)
+		return out
+	})
+}
+
+// RemoveTag implements media.Repository.
+func (s *Store) RemoveTag(ctx context.Context, user int64, id, name string) (media.Media, error) {
+	return s.changeTags(user, id, func(tags []string) []string {
+		return slices.DeleteFunc(slices.Clone(tags), func(t string) bool { return t == name })
+	})
+}
+
+func (s *Store) changeTags(user int64, id string, fn func([]string) []string) (media.Media, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.items[id]
+	if !ok || e.missing {
+		return media.Media{}, media.ErrNotFound
+	}
+	if e.m.Kind != media.KindVideo {
+		return media.Media{}, media.ErrNotVideo
+	}
+	e.m.Tags = fn(e.m.Tags)
+	if len(e.m.Tags) == 0 {
+		e.m.Tags = nil
+	}
+	return s.withProgress(user, e.m), nil
+}
+
+// ListTags implements media.Repository.
+func (s *Store) ListTags(ctx context.Context, section media.Section) ([]media.TagCount, error) {
+	s.mu.RLock()
+	counts := map[string]int{}
+	for _, e := range s.items {
+		if e.missing || e.m.InBin || (section != "" && e.m.Section != section) {
+			continue
+		}
+		for _, t := range e.m.Tags {
+			counts[t]++
+		}
+	}
+	s.mu.RUnlock()
+	out := make([]media.TagCount, 0, len(counts))
+	for name, n := range counts {
+		out = append(out, media.TagCount{Name: name, VideoCount: n})
+	}
+	slices.SortFunc(out, func(a, b media.TagCount) int { return strings.Compare(a.Name, b.Name) })
+	return out, nil
 }
 
 func folderActors(tags []media.ActorTag) []media.ActorTag {

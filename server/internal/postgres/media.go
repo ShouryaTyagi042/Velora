@@ -53,7 +53,13 @@ select m.id, m.fingerprint, m.kind, m.title, m.rel_path, coalesce(m.series, ''),
        coalesce((select json_agg(json_build_object('name', a.name, 'source', ma.source)
                                  order by ma.source = 'manual', a.name)
                  from media_actors ma join actors a on a.id = ma.actor_id
-                 where ma.media_id = m.id), '[]')
+                 where ma.media_id = m.id), '[]'),
+       coalesce((select json_agg(t.name order by t.name)
+                 from media_tags mt join tags t on t.id = mt.tag_id
+                 where mt.media_id = m.id), '[]'),
+       exists (select 1 from favourites f where f.user_id = $1 and f.media_id = m.id),
+       m.in_bin, m.binned_at,
+       (select count(*) from media_views v where v.media_id = m.id)
 from media m
 left join comic_metadata cm on cm.media_id = m.id
 left join video_metadata vm on vm.media_id = m.id
@@ -75,6 +81,18 @@ func (r *MediaRepo) List(ctx context.Context, user int64, f media.ListFilter) ([
 		return "$" + strconv.Itoa(len(args))
 	}
 
+	if f.InBin {
+		q += ` and m.in_bin` // media_bin_idx
+	} else {
+		q += ` and not m.in_bin`
+	}
+	if f.Favourites {
+		q += ` and exists (select 1 from favourites f2 where f2.user_id = $1 and f2.media_id = m.id)`
+	}
+	if f.Tag != "" {
+		q += ` and exists (select 1 from media_tags mt2 join tags t2 on t2.id = mt2.tag_id
+		                   where mt2.media_id = m.id and t2.name = ` + param(f.Tag) + `)`
+	}
 	if f.Kind != "" {
 		q += ` and m.kind = ` + param(string(f.Kind))
 	}
@@ -103,7 +121,9 @@ func (r *MediaRepo) List(ctx context.Context, user int64, f media.ListFilter) ([
 		q += ` and (velora_fold(m.title) like velora_fold(` + p + `)
 		       or velora_fold(m.series) like velora_fold(` + p + `)
 		       or exists (select 1 from media_actors ma3 join actors a3 on a3.id = ma3.actor_id
-		                  where ma3.media_id = m.id and velora_fold(a3.name) like velora_fold(` + p + `)))`
+		                  where ma3.media_id = m.id and velora_fold(a3.name) like velora_fold(` + p + `))
+		       or exists (select 1 from media_tags mt3 join tags t3 on t3.id = mt3.tag_id
+		                  where mt3.media_id = m.id and velora_fold(t3.name) like velora_fold(` + p + `)))`
 	}
 	if f.After != "" {
 		after, ok := parseID(f.After)
@@ -115,6 +135,8 @@ func (r *MediaRepo) List(ctx context.Context, user int64, f media.ListFilter) ([
 		// doesn't exist gives no row, the comparison is null, and the page is empty.
 		// Descending orders continue below the cursor (<), ascending ones above it (>).
 		switch f.Sort {
+		case media.SortBinned:
+			q += ` and (m.binned_at, m.id) < (select binned_at, id from media where id = ` + param(after) + `)`
 		case media.SortRecent:
 			q += ` and (m.added_at, m.id) < (select added_at, id from media where id = ` + param(after) + `)`
 		case media.SortTitleDesc:
@@ -124,6 +146,8 @@ func (r *MediaRepo) List(ctx context.Context, user int64, f media.ListFilter) ([
 		}
 	}
 	switch f.Sort {
+	case media.SortBinned:
+		q += ` order by m.binned_at desc nulls last, m.id desc`
 	case media.SortRandom:
 		q += ` order by random()` // a full scan of what matches; fine for one shuffle of a library
 	case media.SortRecent:
@@ -188,11 +212,14 @@ func (r *MediaRepo) scanMedia(row interface{ Scan(...any) error }) (media.Media,
 		saved     sql.NullTime
 		p         media.Progress
 		actors    []byte
+		tags      []byte
+		binnedAt  sql.NullTime
 	)
 	err := row.Scan(&id, &m.Fingerprint, &m.Kind, &m.Title, &m.RelPath, &m.Series, &m.MimeType, &m.SizeBytes,
 		&m.ModTime, &m.AddedAt, &pageCount, r.types.SQLScanner(&pages),
 		&extracted, &v.DurationMs, &v.Width, &v.Height, &v.Codec, &v.FPS, &v.Preview, &v.Short,
-		&saved, &p.PositionMs, &p.DurationMs, &p.Page, &p.PageCount, &p.Completed, &actors)
+		&saved, &p.PositionMs, &p.DurationMs, &p.Page, &p.PageCount, &p.Completed, &actors,
+		&tags, &m.Favourite, &m.InBin, &binnedAt, &m.Views)
 	if err != nil {
 		return media.Media{}, err
 	}
@@ -213,6 +240,16 @@ func (r *MediaRepo) scanMedia(row interface{ Scan(...any) error }) (media.Media,
 	}
 	if len(m.Actors) == 0 {
 		m.Actors = nil // omitted from JSON, like memstore
+	}
+	if err := json.Unmarshal(tags, &m.Tags); err != nil {
+		return media.Media{}, fmt.Errorf("media %d tags: %w", id, err)
+	}
+	if len(m.Tags) == 0 {
+		m.Tags = nil
+	}
+	if binnedAt.Valid {
+		t := binnedAt.Time
+		m.BinnedAt = &t
 	}
 	return m, nil
 }
@@ -334,7 +371,7 @@ func (r *MediaRepo) ListActors(ctx context.Context, section media.Section) ([]me
 		join media_actors ma on ma.actor_id = a.id
 		join media m         on m.id = ma.media_id
 		left join video_metadata vm on vm.media_id = m.id
-		where m.kind = 'video' and m.missing_since is null`
+		where m.kind = 'video' and m.missing_since is null and not m.in_bin`
 	var args []any
 	if section != "" {
 		q += ` and ` + sectionCond("m.rel_path", func(v any) string { args = append(args, v); return "$1" })(section)
@@ -443,7 +480,7 @@ func (r *MediaRepo) ListSeries(ctx context.Context) ([]media.SeriesCount, error)
 		       (array_agg(m.mod_time order by velora_title_key(m.title) collate "C", m.id) filter (where vm.extracted_at is not null))[1]
 		from media m
 		left join video_metadata vm on vm.media_id = m.id
-		where m.series is not null and m.missing_since is null
+		where m.series is not null and m.missing_since is null and not m.in_bin
 		group by m.series
 		order by velora_title_key(m.series) collate "C", m.series`)
 	if err != nil {
@@ -556,4 +593,183 @@ func (r *MediaRepo) SetSourceURLs(ctx context.Context, urls map[string]string) (
 		changed += int(k)
 	}
 	return changed, tx.Commit()
+}
+
+// SetInBin implements media.Repository. binned_at keeps the first time it was binned while it
+// stays there; restoring clears both.
+func (r *MediaRepo) SetInBin(ctx context.Context, user int64, id string, inBin bool) (media.Media, error) {
+	n, ok := parseID(id)
+	if !ok {
+		return media.Media{}, media.ErrNotFound
+	}
+	res, err := r.db.ExecContext(ctx, `
+		update media set in_bin = $2, binned_at = case when $2 then coalesce(binned_at, now()) end
+		where id = $1 and missing_since is null`, n, inBin)
+	if err != nil {
+		return media.Media{}, err
+	}
+	if k, _ := res.RowsAffected(); k == 0 {
+		return media.Media{}, media.ErrNotFound
+	}
+	return r.Get(ctx, user, id)
+}
+
+// Delete implements media.Repository. Everything that points at the row goes with it (on delete
+// cascade); an orphaned tag stays, and simply counts nothing.
+func (r *MediaRepo) Delete(ctx context.Context, id string) error {
+	n, ok := parseID(id)
+	if !ok {
+		return media.ErrNotFound
+	}
+	res, err := r.db.ExecContext(ctx, `delete from media where id = $1 and in_bin`, n)
+	if err != nil {
+		return err
+	}
+	if k, _ := res.RowsAffected(); k > 0 {
+		return nil
+	}
+	var exists bool
+	if err := r.db.QueryRowContext(ctx, `select exists (select 1 from media where id = $1)`, n).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return media.ErrNotInBin
+	}
+	return media.ErrNotFound
+}
+
+// SetFavourite implements media.Repository.
+func (r *MediaRepo) SetFavourite(ctx context.Context, user int64, id string, favourite bool) (media.Media, error) {
+	n, ok := parseID(id)
+	if !ok {
+		return media.Media{}, media.ErrNotFound
+	}
+	if _, err := r.Get(ctx, user, id); err != nil {
+		return media.Media{}, err
+	}
+	q := `insert into favourites (user_id, media_id) values ($1, $2) on conflict do nothing`
+	if !favourite {
+		q = `delete from favourites where user_id = $1 and media_id = $2`
+	}
+	if _, err := r.db.ExecContext(ctx, q, user, n); err != nil {
+		return media.Media{}, err
+	}
+	return r.Get(ctx, user, id)
+}
+
+// AddTag implements media.Repository.
+func (r *MediaRepo) AddTag(ctx context.Context, user int64, id, name string) (media.Media, error) {
+	return r.changeTag(ctx, user, id, func(tx *sql.Tx, n int64) error {
+		var tagID int64
+		if err := tx.QueryRowContext(ctx, `
+			insert into tags (name) values ($1)
+			on conflict (name) do update set name = excluded.name
+			returning id`, name).Scan(&tagID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `insert into media_tags (media_id, tag_id) values ($1, $2) on conflict do nothing`, n, tagID)
+		return err
+	})
+}
+
+// RemoveTag implements media.Repository.
+func (r *MediaRepo) RemoveTag(ctx context.Context, user int64, id, name string) (media.Media, error) {
+	return r.changeTag(ctx, user, id, func(tx *sql.Tx, n int64) error {
+		_, err := tx.ExecContext(ctx, `
+			delete from media_tags mt using tags t
+			where mt.tag_id = t.id and mt.media_id = $1 and t.name = $2`, n, name)
+		return err
+	})
+}
+
+// changeTag runs fn on a video's tags in a transaction, after checking it's an available video,
+// and returns the video as it is afterwards.
+func (r *MediaRepo) changeTag(ctx context.Context, user int64, id string, fn func(tx *sql.Tx, n int64) error) (media.Media, error) {
+	n, ok := parseID(id)
+	if !ok {
+		return media.Media{}, media.ErrNotFound
+	}
+	var out media.Media
+	err := inTx(ctx, r.db, func(tx *sql.Tx) error {
+		var kind media.Kind
+		err := tx.QueryRowContext(ctx, `select kind from media where id = $1 and missing_since is null for update`, n).Scan(&kind)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return media.ErrNotFound
+		case err != nil:
+			return err
+		case kind != media.KindVideo:
+			return media.ErrNotVideo
+		}
+		if err := fn(tx, n); err != nil {
+			return err
+		}
+		out, err = r.get(ctx, tx, user, id)
+		return err
+	})
+	return out, err
+}
+
+// ListTags implements media.Repository: tags on available, unbinned videos only.
+func (r *MediaRepo) ListTags(ctx context.Context, section media.Section) ([]media.TagCount, error) {
+	q := `
+		select t.name, count(*)
+		from tags t
+		join media_tags mt on mt.tag_id = t.id
+		join media m       on m.id = mt.media_id
+		where m.missing_since is null and not m.in_bin`
+	var args []any
+	if section != "" {
+		q += ` and ` + sectionCond("m.rel_path", func(v any) string { args = append(args, v); return "$1" })(section)
+	}
+	q += `
+		group by t.name
+		order by t.name`
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []media.TagCount{}
+	for rows.Next() {
+		var c media.TagCount
+		if err := rows.Scan(&c.Name, &c.VideoCount); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// RecordView implements media.Repository. The half-hour check and the insert are one statement.
+// Two requests for the same person and item arriving at the same instant could both count (under
+// read committed neither sees the other's row): at worst one extra view, in a race the app never
+// starts (it sends one view per player or reader session). A lock isn't worth it.
+func (r *MediaRepo) RecordView(ctx context.Context, user int64, id string, at time.Time) (int, bool, error) {
+	n, ok := parseID(id)
+	if !ok {
+		return 0, false, media.ErrNotFound
+	}
+	var exists bool
+	if err := r.db.QueryRowContext(ctx, `select exists (select 1 from media where id = $1 and missing_since is null)`, n).Scan(&exists); err != nil {
+		return 0, false, err
+	}
+	if !exists {
+		return 0, false, media.ErrNotFound
+	}
+	res, err := r.db.ExecContext(ctx, `
+		insert into media_views (media_id, user_id, viewed_at)
+		select $1, $2, $3
+		where not exists (select 1 from media_views
+		                  where user_id = $2 and media_id = $1 and viewed_at > $3::timestamptz - $4::interval)`,
+		n, user, at, fmt.Sprintf("%d seconds", int(media.ViewWindow.Seconds())))
+	if err != nil {
+		return 0, false, err
+	}
+	k, _ := res.RowsAffected()
+	var views int
+	if err := r.db.QueryRowContext(ctx, `select count(*) from media_views where media_id = $1`, n).Scan(&views); err != nil {
+		return 0, false, err
+	}
+	return views, k > 0, nil
 }

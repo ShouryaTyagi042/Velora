@@ -3,13 +3,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, View } from "react-native";
 import type { SearchBarCommands } from "react-native-screens";
 
-import { listMedia, type Media, type Page } from "@/api/media";
+import { listMedia, listTags, type Media, type Page } from "@/api/media";
 import { EmptyView } from "@/components/EmptyView";
 import { ErrorView } from "@/components/ErrorView";
 import { Icon } from "@/components/Icon";
 import { Loading } from "@/components/Loading";
 import { MediaCard } from "@/components/MediaCard";
+import { TagChip } from "@/components/TagChip";
 import { Text } from "@/components/Text";
+import { useAsync } from "@/hooks/useAsync";
 import { usePages } from "@/hooks/usePages";
 import { openMedia } from "@/navigation/openMedia";
 import { clearHistory, forget, remember, useSearchHistory } from "@/search/history";
@@ -56,7 +58,7 @@ export default function Search() {
       options={{
         headerSearchBarOptions: {
           ref: bar,
-          placeholder: "Titles, actors and series",
+          placeholder: "Titles, actors, series and tags",
           onChangeText: (e) => setQuery(e.nativeEvent.text),
           onSearchButtonPress: (e) => remember(e.nativeEvent.text),
           onCancelButtonPress: () => setQuery(""),
@@ -86,7 +88,7 @@ export default function Search() {
         ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.footer} accessibilityLabel="Loading more" /> : undefined}
         ListEmptyComponent={
           q ? (
-            <EmptyView title={`Nothing matches “${q}”`} detail="Search looks at titles, actors' names and anime series. Check the spelling, or try part of a name." />
+            <EmptyView title={`Nothing matches “${q}”`} detail="Search looks at titles, actors' names, anime series and tags. Check the spelling, or try part of a name." />
           ) : undefined
         }
       />
@@ -94,13 +96,49 @@ export default function Search() {
   );
 }
 
+const fetchTags = (signal: AbortSignal) => listTags({ signal });
+// How many tags Search offers before you type: the most used.
+const TOP_TAGS = 24;
+
+// BrowseTags is the library's most used tags as chips: one tap lists everything with the tag.
+function BrowseTags() {
+  const { state } = useAsync(fetchTags);
+  if (state.status !== "ok" || state.data.length === 0) return null;
+  const top = [...state.data].sort((a, b) => b.videoCount - a.videoCount || a.name.localeCompare(b.name)).slice(0, TOP_TAGS);
+  return (
+    <View style={styles.tags}>
+      <Text variant="title" accessibilityRole="header">
+        Browse by tag
+      </Text>
+      <View style={styles.tagCloud}>
+        {top.map((t) => (
+          <TagChip key={t.name} name={t.name} count={t.videoCount} />
+        ))}
+      </View>
+    </View>
+  );
+}
+
 // History is what Search shows before you type: recent searches, newest first, each one tap
-// from running again, each removable, and all of them clearable at once.
+// from running again, each removable, and all of them clearable at once; then the library's tags.
 function History({ onRun }: { onRun: (q: string) => void }) {
   const { colors } = useAppTheme();
   const history = useSearchHistory();
   if (history.length === 0) {
-    return <EmptyView title="Search your library" detail="Find a film, an episode, a comic or an actor by any part of its name." />;
+    return (
+      <FlatList
+        contentInsetAdjustmentBehavior="automatic"
+        data={[]}
+        renderItem={() => null}
+        contentContainerStyle={styles.history}
+        ListHeaderComponent={<BrowseTags />}
+        ListEmptyComponent={
+          <View style={styles.emptyBox}>
+            <EmptyView title="Search your library" detail="Find a film, an episode, a comic, an actor or a tag by any part of its name." />
+          </View>
+        }
+      />
+    );
   }
   return (
     <FlatList
@@ -146,6 +184,7 @@ function History({ onRun }: { onRun: (q: string) => void }) {
           </Pressable>
         </View>
       )}
+      ListFooterComponent={<BrowseTags />}
     />
   );
 }
@@ -161,4 +200,7 @@ const styles = StyleSheet.create({
   entryText: { flex: 1 },
   remove: { width: touch.min, height: touch.min, alignItems: "flex-end", justifyContent: "center" },
   pressed: { opacity: 0.6 },
+  tags: { gap: space.md, paddingTop: space.xl },
+  tagCloud: { flexDirection: "row", flexWrap: "wrap", gap: space.sm },
+  emptyBox: { minHeight: 320 },
 });

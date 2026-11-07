@@ -8,6 +8,7 @@ import { CoverCard } from "@/components/CoverCard";
 import { GroupList } from "@/components/GroupList";
 import { Text } from "@/components/Text";
 import { useAsync } from "@/hooks/useAsync";
+import { useRefetchOnLibraryChange } from "@/hooks/useLibraryChanges";
 import { useRescan } from "@/hooks/useRescan";
 import { plural } from "@/lib/format";
 import { space } from "@/theme";
@@ -36,6 +37,7 @@ const renderSeries = (s: SeriesCount) => (
 export default function Anime() {
   const { state, refreshing, refetch } = useAsync(fetchSeries);
   const { scanning, rescan } = useRescan(refetch);
+  useRefetchOnLibraryChange(refetch);
   const series = state.status === "ok" ? { status: "ok" as const, data: state.data.series } : state;
   const count = state.status === "ok" ? state.data.series.length : 0;
   const keyOf = useCallback((s: SeriesCount) => s.name, []);

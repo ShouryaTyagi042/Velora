@@ -14,6 +14,7 @@ import { PlaybackError, usePlayerStatus } from "@/hooks/usePlayerStatus";
 import { formatDuration } from "@/lib/format";
 import { loadWithProgress, resumeAt } from "@/progress/resume";
 import { useProgressSync } from "@/progress/useProgressSync";
+import { useViewOnce, WATCHED_FOR } from "@/progress/views";
 import { onMedia, space, typography, useAppTheme } from "@/theme";
 
 // The player screen fetches the media first: a bad id becomes a "Not found" from the API
@@ -62,6 +63,10 @@ function Player({ media }: { media: Media }) {
     positionMs: Math.round(seconds * 1000),
     durationMs: Math.round(player.duration * 1000),
   });
+  // A view: 30 s actually played (seeking ahead doesn't count; only small steady steps add up),
+  // or the end of a video shorter than that.
+  const view = useViewOnce(media.id);
+  const watched = useRef({ seconds: 0, last: -1 });
   useEventListener(player, "timeUpdate", ({ currentTime }) => {
     if (
       player.playing &&
@@ -69,7 +74,13 @@ function Player({ media }: { media: Media }) {
       player.duration > 0
     )
       sync.save(position(currentTime));
+    const w = watched.current;
+    const step = currentTime - w.last;
+    if (player.playing && w.last >= 0 && step > 0 && step < 2) w.seconds += step;
+    w.last = currentTime;
+    if (w.seconds >= Math.min(WATCHED_FOR, player.duration * 0.9 || WATCHED_FOR)) view();
   });
+  useEventListener(player, "playToEnd", () => view());
   useEventListener(player, "playingChange", ({ isPlaying }) => {
     if (!isPlaying && player.duration > 0)
       sync.save(position(player.currentTime), { force: true });

@@ -12,6 +12,7 @@ import { Poster } from "@/components/Poster";
 import { Skeleton } from "@/components/Skeleton";
 import { Text } from "@/components/Text";
 import { usePages } from "@/hooks/usePages";
+import { useRefetchOnLibraryChange } from "@/hooks/useLibraryChanges";
 import { useRescan } from "@/hooks/useRescan";
 import { resumeAt } from "@/progress/resume";
 import { gradients, radius, space } from "@/theme";
@@ -30,6 +31,7 @@ export default function Series() {
   );
   const { state, refreshing, refetch, loadMore, loadingMore } = usePages(fetchPage);
   const { scanning, rescan } = useRescan(refetch);
+  useRefetchOnLibraryChange(refetch);
 
   if (state.status === "error") return <ErrorView error={state.error} onRetry={refetch} />;
   const episodes = state.status === "ok" ? state.data : [];

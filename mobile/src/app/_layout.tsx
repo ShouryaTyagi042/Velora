@@ -2,10 +2,11 @@ import { Stack, ThemeProvider } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
-import { StyleSheet } from "react-native";
+import { Platform, StyleSheet } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { AuthProvider, useAuth } from "@/auth/AuthProvider";
+import { PreviewProvider } from "@/preview/PreviewProvider";
 import { ReaderSettingsProvider } from "@/reader/settings";
 import { navigationTheme, palette } from "@/theme";
 
@@ -24,7 +25,11 @@ export default function RootLayout() {
         <StatusBar style="light" />
         <AuthProvider>
           <ReaderSettingsProvider>
-            <RootStack />
+            {/* The one long-press preview player, around every screen: cards appear in the tabs,
+                and also over them (Details' rails and episodes, tag pages). */}
+            <PreviewProvider>
+              <RootStack />
+            </PreviewProvider>
           </ReaderSettingsProvider>
         </AuthProvider>
       </ThemeProvider>
@@ -54,6 +59,7 @@ function RootStack() {
         />
         <Stack.Screen name="player/[id]" options={{ title: "", headerBackButtonDisplayMode: "minimal" }} />
         <Stack.Screen name="reader/[id]" options={{ headerShown: false }} />
+        <Stack.Screen name="tag/[name]" options={{ headerLargeTitle: true, headerTransparent: Platform.OS === "ios", headerBackButtonDisplayMode: "minimal" }} />
         <Stack.Screen
           name="surprise"
           options={{

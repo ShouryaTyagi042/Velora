@@ -6,6 +6,7 @@ import { listMedia, MediaKind } from "@/api/media";
 import { MediaGrid } from "@/components/MediaGrid";
 import { SortButton } from "@/components/SortButton";
 import { usePages } from "@/hooks/usePages";
+import { useRefetchOnLibraryChange } from "@/hooks/useLibraryChanges";
 import { useRescan } from "@/hooks/useRescan";
 
 // Comics: every comic as a cover, three across like a shelf (four on a tablet). Covers are 2:3,
@@ -24,6 +25,7 @@ export default function Comics() {
   );
   const { state, refreshing, refetch, loadMore, loadingMore, moreError } = usePages(fetchPage);
   const { scanning, rescan } = useRescan(refetch);
+  useRefetchOnLibraryChange(refetch);
 
   return (
     <>

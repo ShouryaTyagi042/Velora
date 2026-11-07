@@ -28,7 +28,12 @@ export function Chip({ label, selected = false, featured = false, onPress, acces
         accessibilityLabel={accessibilityLabel}
         style={({ pressed }) => pressed && styles.pressed}
       >
-        <LinearGradient colors={gradients.surprise} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.chip, styles.featured]}>
+        <LinearGradient
+          colors={gradients.surprise}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[styles.chip, styles.featured, { borderColor: colors.text }]}
+        >
           <Text variant="label" color={colors.onPrimary} style={styles.featuredLabel}>
             {label}
           </Text>
@@ -66,7 +71,8 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     paddingHorizontal: space.md + 2,
   },
-  featured: { borderColor: "transparent", overflow: "hidden" },
+  // A white outline round the gradient: it lifts the pill off artwork of any colour.
+  featured: { overflow: "hidden" },
   featuredLabel: { fontWeight: "800" },
   pressed: { opacity: 0.75 },
 });

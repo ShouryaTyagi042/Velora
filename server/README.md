@@ -114,6 +114,18 @@ Every response is JSON (`Content-Type: application/json; charset=utf-8`) and car
 | `DELETE /api/media/{id}/actors/{name}` | `204` | `404 not_found` (no such link), `409 conflict` for a folder actor (rename the folder instead) |
 | `GET /api/actors` | `200 {"items":[{"name":"Keanu Reeves","videoCount":2,"cover":{"id":"7","modTime":"…"}}]}`: available videos per actor, both sources. `cover` is their newest video with a thumbnail (absent while none has one); its thumbnail URL is `/api/media/{cover.id}/thumbnail?v={cover.modTime}`. `?section=movies\|anime` counts only that section's videos | `400 validation` for any other `section` |
 | `GET /api/series` | `200 {"items":[{"name":"Cowboy Bebop","episodeCount":26,"cover":{"id":"12","modTime":"…"}}]}`: available episodes per anime series, in natural order. `cover` is the first episode (natural order) with a thumbnail | |
+| `GET /api/media?bin=true&sort=binned` | what's in the bin, most recently binned first. Without `bin=true`, every list leaves binned items out (so do Continue, actors, series, tags and search) | `400 validation` for `sort=binned` without `bin=true` |
+| `GET /api/media?favourites=true` | the signed-in user's favourites | |
+| `GET /api/media?tag=<name>` | videos with that tag (matched lowercased, spaces collapsed); `q` matches tags too | `400 validation` if empty or over 200 bytes |
+| `POST /api/media/{id}/bin` | `200 Media` with `inBin` and `binnedAt`: hidden everywhere but the bin; files, progress, actors and tags kept | `404 not_found` |
+| `DELETE /api/media/{id}/bin` | `200 Media`: restored as it was | `404 not_found` |
+| `DELETE /api/media/{id}` | `204`: deletes an item **in the bin** for good: its file (or comic folder) inside the library, its thumbnail, preview and Shorts clip, then its row (progress, favourites, actor and tag links with it) | `409 conflict` if it isn't in the bin; `404 not_found` |
+| `DELETE /api/bin` | `200 {"deleted":n,"failed":m}`: everything in the bin (only `?kind=video\|comic` and/or `?section=movies\|anime` when given), deleted as above; an item whose files can't be removed stays in the bin and is counted in `failed` | |
+| `PUT` / `DELETE /api/media/{id}/favourite` | `200 Media` with `favourite` for the signed-in user; both idempotent | `404 not_found` |
+| `POST /api/media/{id}/tags` | `200 Media` with the tag added (videos only). Body `{"name":"Sci Fi"}`, stored as `sci fi`; 1–40 characters, no `/ # ?` | `400 validation` (bad name, or a comic), `404 not_found` |
+| `DELETE /api/media/{id}/tags/{name}` | `200 Media` without it | `404 not_found` |
+| `GET /api/tags` | `200 {"items":[{"name":"sci fi","videoCount":3}]}`: tags on available, unbinned videos, by name; `?section=movies\|anime` counts only that section's videos | `400 validation` for any other `section` |
+| `POST /api/media/{id}/views` | `200 {"views":12,"counted":true}`: one view (the app sends it past 30 s of playback, or at the end of a shorter video, and when a comic reaches its last page). The same person again within 30 minutes is the same view: `counted:false`. Every `Media` carries `views`, everyone's total | `404 not_found` |
 | `PUT /api/media/{id}/progress` | `200 Progress` as stored. Body: `{"positionMs","durationMs","clientTs"}` for a video, `{"page","pageCount","clientTs"}` for a comic. A save older (by `clientTs`) than the stored one is accepted and ignored | `400 validation`, `404 not_found` |
 | `GET /api/media/{id}/progress` | `200 Progress` | `404 not_found` if never started |
 | `GET /api/continue` | `200 {"watching":[Media],"reading":[Media]}`: the signed-in user's unfinished items, newest first, 10 each. `ETag`/`304` like the list | |

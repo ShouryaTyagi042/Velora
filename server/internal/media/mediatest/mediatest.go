@@ -316,6 +316,161 @@ func Run(t *testing.T, open func(t *testing.T) Store) {
 		}
 	})
 
+	t.Run("bin hides, restore brings back, delete removes", func(t *testing.T) {
+		s := seeded(t)
+		ctx := context.Background()
+		matrix := byTitle(t, s, "The Matrix")
+		if _, err := s.SaveProgress(ctx, alice, matrix.ID, media.Progress{PositionMs: 1000, DurationMs: 10_000, UpdatedAt: t0}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.AddTag(ctx, alice, matrix.ID, "classic"); err != nil {
+			t.Fatal(err)
+		}
+
+		m, err := s.SetInBin(ctx, alice, matrix.ID, true)
+		if err != nil || !m.InBin || m.BinnedAt == nil {
+			t.Fatalf("SetInBin(true) = %+v, %v; want in the bin with a time", m, err)
+		}
+		if got := titles(list(t, s, media.ListFilter{Kind: media.KindVideo})); slices.Contains(got, "The Matrix") {
+			t.Errorf("videos = %v: a binned item is listed", got)
+		}
+		if got := titles(list(t, s, media.ListFilter{InBin: true, Sort: media.SortBinned})); !slices.Equal(got, []string{"The Matrix"}) {
+			t.Errorf("bin = %v, want [The Matrix]", got)
+		}
+		if cont, _ := s.Continue(ctx, alice, media.KindVideo, 10); len(cont) != 0 {
+			t.Errorf("Continue = %v: a binned item is listed", titles(cont))
+		}
+		actors(t, s, []media.ActorCount{count("Keanu Reeves", 1), count("Matthew McConaughey", 1)})
+		if tags, _ := s.ListTags(ctx, ""); len(tags) != 0 {
+			t.Errorf("ListTags = %v: a binned item's tag counts", tags)
+		}
+		if err := s.Delete(ctx, byTitle(t, s, "John Wick").ID); !errors.Is(err, media.ErrNotInBin) {
+			t.Errorf("Delete(not in the bin) = %v, want ErrNotInBin", err)
+		}
+
+		// Restored: as it was, progress and tag included.
+		m, err = s.SetInBin(ctx, alice, matrix.ID, false)
+		if err != nil || m.InBin || m.BinnedAt != nil || m.Progress == nil || !slices.Equal(m.Tags, []string{"classic"}) {
+			t.Fatalf("restore = %+v, %v; want out of the bin with its progress and tag", m, err)
+		}
+
+		if _, err := s.SetInBin(ctx, alice, matrix.ID, true); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Delete(ctx, matrix.ID); err != nil {
+			t.Fatalf("Delete = %v", err)
+		}
+		if _, err := s.Get(ctx, alice, matrix.ID); !errors.Is(err, media.ErrNotFound) {
+			t.Errorf("Get after Delete = %v, want ErrNotFound", err)
+		}
+		if err := s.Delete(ctx, matrix.ID); !errors.Is(err, media.ErrNotFound) {
+			t.Errorf("Delete twice = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("views count once per half hour per person", func(t *testing.T) {
+		s := seeded(t)
+		ctx := context.Background()
+		wick := byTitle(t, s, "John Wick")
+		steps := []struct {
+			user    int64
+			at      time.Duration
+			views   int
+			counted bool
+		}{
+			{alice, 0, 1, true},
+			{alice, 10 * time.Minute, 1, false}, // the same view: a retry, a reopened player
+			{bob, 10 * time.Minute, 2, true},    // someone else's
+			{alice, 45 * time.Minute, 3, true},  // past the window: watched again
+		}
+		for i, st := range steps {
+			views, counted, err := s.RecordView(ctx, st.user, wick.ID, t0.Add(st.at))
+			if err != nil || views != st.views || counted != st.counted {
+				t.Errorf("view %d = %d, %v, %v; want %d, %v", i+1, views, counted, err, st.views, st.counted)
+			}
+		}
+		if m := byTitle(t, s, "John Wick"); m.Views != 3 {
+			t.Errorf("John Wick views = %d, want 3", m.Views)
+		}
+		if m := byTitle(t, s, "The Matrix"); m.Views != 0 {
+			t.Errorf("The Matrix views = %d, want 0", m.Views)
+		}
+		if _, _, err := s.RecordView(ctx, alice, "no-such-id", t0); !errors.Is(err, media.ErrNotFound) {
+			t.Errorf("RecordView(unknown) = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("favourites are per user", func(t *testing.T) {
+		s := seeded(t)
+		ctx := context.Background()
+		wick := byTitle(t, s, "John Wick")
+		m, err := s.SetFavourite(ctx, alice, wick.ID, true)
+		if err != nil || !m.Favourite {
+			t.Fatalf("SetFavourite = %+v, %v", m, err)
+		}
+		if _, err := s.SetFavourite(ctx, alice, wick.ID, true); err != nil { // again: a no-op
+			t.Fatal(err)
+		}
+		if got := titles(list(t, s, media.ListFilter{Favourites: true})); !slices.Equal(got, []string{"John Wick"}) {
+			t.Errorf("alice's favourites = %v", got)
+		}
+		if m, _ := s.Get(ctx, bob, wick.ID); m.Favourite {
+			t.Error("bob sees alice's favourite as his")
+		}
+		got, err := s.List(ctx, bob, media.ListFilter{Favourites: true})
+		if err != nil || len(got) != 0 {
+			t.Errorf("bob's favourites = %v, %v; want none", titles(got), err)
+		}
+		if m, _ := s.SetFavourite(ctx, alice, wick.ID, false); m.Favourite {
+			t.Error("still a favourite after removing it")
+		}
+	})
+
+	t.Run("tags", func(t *testing.T) {
+		s := seeded(t)
+		ctx := context.Background()
+		wick, matrix := byTitle(t, s, "John Wick"), byTitle(t, s, "The Matrix")
+		for _, tag := range []string{"action", "neo-noir"} {
+			if _, err := s.AddTag(ctx, alice, wick.ID, tag); err != nil {
+				t.Fatal(err)
+			}
+		}
+		m, err := s.AddTag(ctx, alice, matrix.ID, "action")
+		if err != nil || !slices.Equal(m.Tags, []string{"action"}) {
+			t.Fatalf("AddTag = %v, %v", m.Tags, err)
+		}
+		if _, err := s.AddTag(ctx, alice, matrix.ID, "action"); err != nil { // again: a no-op
+			t.Fatal(err)
+		}
+		if _, err := s.AddTag(ctx, alice, byTitle(t, s, "Watchmen").ID, "x"); !errors.Is(err, media.ErrNotVideo) {
+			t.Errorf("AddTag(comic) = %v, want ErrNotVideo", err)
+		}
+		if got := titles(list(t, s, media.ListFilter{Tag: "action"})); !slices.Equal(got, []string{"John Wick", "The Matrix"}) {
+			t.Errorf("tag action = %v", got)
+		}
+		if got := titles(list(t, s, media.ListFilter{Query: "NOIR"})); !slices.Equal(got, []string{"John Wick"}) {
+			t.Errorf("search noir = %v: search should match tags", got)
+		}
+		tags, err := s.ListTags(ctx, "")
+		if want := []media.TagCount{{Name: "action", VideoCount: 2}, {Name: "neo-noir", VideoCount: 1}}; err != nil || !slices.Equal(tags, want) {
+			t.Errorf("ListTags = %v, %v; want %v", tags, err, want)
+		}
+		if tags, _ := s.ListTags(ctx, media.SectionAnime); len(tags) != 0 {
+			t.Errorf("ListTags(anime) = %v, want none: only films are tagged", tags)
+		}
+		m, err = s.RemoveTag(ctx, alice, wick.ID, "action")
+		if err != nil || !slices.Equal(m.Tags, []string{"neo-noir"}) {
+			t.Errorf("RemoveTag = %v, %v", m.Tags, err)
+		}
+		// A rescan keeps tags: the scanner doesn't own them.
+		if _, err := s.Sync(ctx, Library(), t0.Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		if m := byTitle(t, s, "John Wick"); !slices.Equal(m.Tags, []string{"neo-noir"}) {
+			t.Errorf("after a rescan tags = %v", m.Tags)
+		}
+	})
+
 	t.Run("titles sort naturally", func(t *testing.T) {
 		s := open(t)
 		var lib []media.Media

@@ -34,3 +34,23 @@ export function formatResolution(width: number, height: number): string {
 export function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
 }
+
+// formatAgo says how long ago an instant was, the way people say it: "just now", "5 minutes ago",
+// "yesterday", "3 days ago", then a date.
+export function formatAgo(iso: string, now = Date.now()): string {
+  const s = Math.max(0, (now - Date.parse(iso)) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${plural(Math.floor(s / 60), "minute")} ago`;
+  if (s < 86_400) return `${plural(Math.floor(s / 3600), "hour")} ago`;
+  const days = Math.floor(s / 86_400);
+  if (days === 1) return "yesterday";
+  if (days < 30) return `${days} days ago`;
+  return formatDate(iso);
+}
+
+// formatViews is a view count the way streaming apps show one: "1 view", "842 views", "12K views".
+export function formatViews(n: number): string {
+  if (n < 1000) return plural(n, "view");
+  const k = n / 1000;
+  return `${k < 10 ? k.toFixed(1).replace(/\.0$/, "") : Math.round(k)}K views`;
+}

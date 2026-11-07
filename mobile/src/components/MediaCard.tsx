@@ -2,12 +2,13 @@ import * as Haptics from "expo-haptics";
 import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from "react-native";
 
 import { MediaKind, Section, type Media, type Progress } from "@/api/media";
-import { formatDuration, formatResolution } from "@/lib/format";
+import { formatDuration, formatResolution, formatViews } from "@/lib/format";
 import { ComicPreview } from "@/preview/ComicPreview";
 import { PreviewVideo } from "@/preview/PreviewVideo";
 import { startPreview, useIsPreviewing } from "@/preview/store";
 import { gradients, onMedia, radius, space, useAppTheme } from "@/theme";
 import { Gradient } from "./Gradient";
+import { Icon } from "./Icon";
 import { Poster } from "./Poster";
 import { Text } from "./Text";
 
@@ -62,6 +63,11 @@ export function MediaCard({ media, onPress, layout = "rail", showKind = false, s
           </>
         )}
         {showKind && !previewing && <Kind media={media} />}
+        {media.favourite && !previewing && (
+          <View style={[styles.heart, { backgroundColor: onMedia.scrim }]} accessible={false}>
+            <Icon sf="heart.fill" md="favorite" size={11} color={colors.primaryText} />
+          </View>
+        )}
         {media.video && !previewing && (
           <Text variant="caption" color={onMedia.text} style={[styles.badge, styles.duration]}>
             {formatDuration(media.video.durationMs / 1000)}
@@ -114,6 +120,8 @@ export function detailLine(m: Media): string {
   if (m.video) parts.push(formatResolution(m.video.width, m.video.height));
   if (m.comic) parts.push(`${m.comic.pageCount} pages`);
   if (m.kind === MediaKind.Video && !m.video) parts.push("Still processing");
+  if (m.views > 0) parts.push(formatViews(m.views));
+  if (m.tags?.length) parts.push(m.tags.slice(0, 3).map((t) => `#${t}`).join(" "));
   return parts.join("  ·  ");
 }
 
@@ -121,6 +129,7 @@ function describe(m: Media, done: number | null): string {
   const parts = [m.title, m.kind === MediaKind.Video ? (m.section === Section.Anime ? "anime" : "video") : "comic"];
   if (m.video) parts.push(formatDuration(m.video.durationMs / 1000));
   if (done !== null) parts.push(`${Math.round(done * 100)}% ${m.kind === MediaKind.Video ? "watched" : "read"}`);
+  if (m.favourite) parts.push("favourite");
   return parts.join(", ");
 }
 
@@ -143,6 +152,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   kind: { top: space.sm, left: space.sm },
+  heart: { position: "absolute", top: space.sm, right: space.sm, width: 22, height: 22, borderRadius: 11, alignItems: "center", justifyContent: "center" },
   duration: { bottom: space.sm + 2, right: space.sm, fontVariant: ["tabular-nums"] },
   track: { position: "absolute", left: 0, right: 0, bottom: 0, height: 3 },
   bar: { height: "100%" },

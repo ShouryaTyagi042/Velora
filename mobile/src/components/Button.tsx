@@ -6,13 +6,14 @@ import { radius, space, touch, useAppTheme } from "@/theme";
 import { Icon } from "./Icon";
 import { Text } from "./Text";
 
-type Variant = "play" | "primary" | "secondary" | "quiet";
+type Variant = "play" | "primary" | "secondary" | "quiet" | "danger";
 
 type Props = {
   label: string;
   onPress: () => void;
   // play: the white button that starts something (Play, Resume, Read). primary: Velora blue, for
   // the one action of a form. secondary: translucent grey, beside play. quiet: outline only.
+  // danger: red, for what can't be undone (Delete forever, Empty bin).
   variant?: Variant;
   icon?: { sf: SFSymbol; md: AndroidSymbol };
   disabled?: boolean;
@@ -29,6 +30,7 @@ export function Button({ label, onPress, variant = "primary", icon, disabled = f
     primary: { bg: colors.primary, fg: colors.onPrimary, border: undefined },
     secondary: { bg: colors.secondaryFill, fg: colors.text, border: undefined },
     quiet: { bg: "transparent", fg: colors.text, border: colors.border },
+    danger: { bg: colors.dangerFill, fg: colors.onPrimary, border: undefined },
   }[variant];
   const press = () => {
     if (haptic) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);

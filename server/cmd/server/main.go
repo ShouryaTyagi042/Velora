@@ -24,6 +24,7 @@ import (
 	"github.com/ShouryaTyagi042/Velora/server/internal/jobs"
 	"github.com/ShouryaTyagi042/Velora/server/internal/library"
 	"github.com/ShouryaTyagi042/Velora/server/internal/postgres"
+	"github.com/ShouryaTyagi042/Velora/server/internal/trash"
 	"github.com/ShouryaTyagi042/Velora/server/migrations"
 )
 
@@ -134,7 +135,8 @@ func run() error {
 	}()
 
 	srv := &http.Server{
-		Handler: api.CORS(corsOrigins(), api.NewHandler(repo, serverJobs{lib, registry}, root.FS(), os.DirFS(thumbDir), os.DirFS(previewDir), os.DirFS(shortDir), authn)),
+		Handler: api.CORS(corsOrigins(), api.NewHandler(repo, serverJobs{lib, registry}, root.FS(), os.DirFS(thumbDir), os.DirFS(previewDir), os.DirFS(shortDir),
+			trash.Remover{Library: root, Derived: []string{thumbDir, previewDir, shortDir}}, authn)),
 		// A client that connects and sends nothing would otherwise hold a goroutine forever.
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,

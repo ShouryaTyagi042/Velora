@@ -13,7 +13,9 @@ import (
 // concrete store, scanner or directory. files is the media library; media RelPaths are opened
 // inside it. thumbs holds the extractor's video thumbnails, {id}.jpg, previews its long-press
 // previews, {id}.mp4, and shorts its Shorts clips, {id}.mp4.
-func NewHandler(repo media.Repository, js Jobs, files, thumbs, previews, shorts fs.FS, authn Authenticator) http.Handler {
+//
+// rm deletes an item's files when it is deleted from the bin; nil deletes only the database row.
+func NewHandler(repo media.Repository, js Jobs, files, thumbs, previews, shorts fs.FS, rm Remover, authn Authenticator) http.Handler {
 	// Everything on this mux needs a session: it's mounted below behind requireUser, so a new
 	// route is protected by default and can't be forgotten.
 	mux := http.NewServeMux()
@@ -25,9 +27,19 @@ func NewHandler(repo media.Repository, js Jobs, files, thumbs, previews, shorts 
 	mux.Handle("DELETE /api/media/{id}/actors/{name}", removeActor(repo))
 	mux.Handle("GET /api/actors", listActors(repo))
 	mux.Handle("GET /api/series", listSeries(repo))
+	mux.Handle("GET /api/tags", listTags(repo))
+	mux.Handle("POST /api/media/{id}/tags", addTag(repo))
+	mux.Handle("DELETE /api/media/{id}/tags/{name}", removeTag(repo))
+	mux.Handle("PUT /api/media/{id}/favourite", addFavourite(repo))
+	mux.Handle("DELETE /api/media/{id}/favourite", removeFavourite(repo))
+	mux.Handle("POST /api/media/{id}/bin", moveToBin(repo))
+	mux.Handle("DELETE /api/media/{id}/bin", restoreFromBin(repo))
+	mux.Handle("DELETE /api/media/{id}", deleteMedia(repo, rm))
+	mux.Handle("DELETE /api/bin", emptyBin(repo, rm))
 	mux.Handle("PUT /api/media/{id}/progress", putProgress(repo))
 	mux.Handle("GET /api/media/{id}/progress", getProgress(repo))
 	mux.Handle("GET /api/continue", getContinue(repo))
+	mux.Handle("POST /api/media/{id}/views", recordView(repo))
 	mux.Handle("GET /api/media/{id}/thumbnail", getThumbnail(repo, files, thumbs))
 	mux.Handle("GET /api/media/{id}/preview", getPreview(repo, previews))
 	mux.Handle("GET /api/media/{id}/short", getShort(repo, shorts))

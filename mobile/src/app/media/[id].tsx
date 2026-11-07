@@ -1,9 +1,24 @@
 import { router, Stack, useLocalSearchParams } from "expo-router";
-import { useCallback, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
+import { useCallback, useRef, useState, type ComponentRef } from "react";
+import { Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
 
 import { ApiError } from "@/api/client";
-import { addActor, getMedia, listMedia, MediaKind, removeActor, Section, type Media } from "@/api/media";
+import {
+  addActor,
+  addTag,
+  deleteForever,
+  getMedia,
+  listMedia,
+  MediaKind,
+  moveToBin,
+  removeActor,
+  removeTag,
+  restoreFromBin,
+  Section,
+  setFavourite,
+  type Media,
+} from "@/api/media";
+import { ActionButton } from "@/components/ActionButton";
 import { ActorChip } from "@/components/ActorChip";
 import { Button } from "@/components/Button";
 import { EpisodeRow } from "@/components/EpisodeRow";
@@ -14,9 +29,11 @@ import { MediaCard } from "@/components/MediaCard";
 import { Poster } from "@/components/Poster";
 import { Rail } from "@/components/Rail";
 import { Skeleton } from "@/components/Skeleton";
+import { TagChip } from "@/components/TagChip";
 import { Text } from "@/components/Text";
 import { useAsync } from "@/hooks/useAsync";
-import { formatBytes, formatDate, formatDuration, formatResolution } from "@/lib/format";
+import { libraryChanged } from "@/hooks/useLibraryChanges";
+import { formatBytes, formatDate, formatDuration, formatResolution, formatViews } from "@/lib/format";
 import { openMedia } from "@/navigation/openMedia";
 import { resumeAt, resumePage } from "@/progress/resume";
 import { gradients, onMedia, radius, space, touch, typography, useAppTheme } from "@/theme";
@@ -61,9 +78,53 @@ function MediaDetails({ media: initial, related }: { media: Media; related: Medi
   const page = resumePage(media);
   const action = isVideo ? (at > 0 ? `Resume from ${formatDuration(at)}` : "Play") : page > 0 ? `Continue on page ${page + 1}` : "Read";
   const watched = media.progress && media.video && !media.progress.completed ? (media.progress.positionMs ?? 0) / media.video.durationMs : null;
+  const tags = media.tags ?? [];
+  const tagInput = useRef<ComponentRef<typeof TextInput>>(null);
+  const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  // run sends one change and puts the server's answer on screen. A failure leaves the screen as it
+  // was and says so under the buttons.
+  const run = (change: () => Promise<Media>) => {
+    if (busy) return;
+    setBusy(true);
+    setActionError(null);
+    change().then(
+      (m) => {
+        setMedia(m);
+        setBusy(false);
+        libraryChanged();
+      },
+      (err: unknown) => {
+        setActionError(err instanceof ApiError ? err.message : "Couldn't reach the server. Check your Wi-Fi and try again.");
+        setBusy(false);
+      },
+    );
+  };
+  const confirmDelete = () =>
+    Alert.alert(
+      `Delete “${media.title}” forever?`,
+      isVideo ? "The video file is removed from the server. This can't be undone." : "The comic's pages are removed from the server. This can't be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete forever",
+          style: "destructive",
+          onPress: () =>
+            deleteForever(media.id).then(
+              () => {
+                libraryChanged();
+                router.back();
+              },
+              (err: unknown) => setActionError(err instanceof ApiError ? err.message : "Couldn't reach the server. Try again."),
+            ),
+        },
+      ],
+    );
 
   return (
-    <ScrollView contentInsetAdjustmentBehavior="never" contentContainerStyle={styles.content}>
+    <ScrollView ref={scroll} contentInsetAdjustmentBehavior="never" contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       <Stack.Screen options={{ title: "" }} />
 
       {/* The still, edge to edge under the transparent header, is a second Play button. */}
@@ -96,6 +157,29 @@ function MediaDetails({ media: initial, related }: { media: Media; related: Medi
           </Text>
         </View>
 
+        {media.inBin && (
+          <View style={[styles.binBanner, { backgroundColor: colors.binTint, borderColor: colors.dangerFill }]} accessibilityRole="summary">
+            <View style={styles.binTitle}>
+              <Icon sf="trash.fill" md="delete" size={18} color={colors.danger} />
+              <Text variant="label">In the bin{media.binnedAt ? ` since ${formatDate(media.binnedAt)}` : ""}</Text>
+            </View>
+            <Text variant="caption" muted>
+              It&apos;s hidden everywhere else. Restore it to bring it back as it was, or delete it to remove its files from the server.
+            </Text>
+            <View style={styles.binButtons}>
+              <Button
+                label="Restore"
+                icon={{ sf: "arrow.uturn.backward", md: "restore_from_trash" }}
+                variant="secondary"
+                disabled={busy}
+                onPress={() => run(() => restoreFromBin(media.id))}
+                style={styles.half}
+              />
+              <Button label="Delete forever" icon={{ sf: "trash", md: "delete_forever" }} variant="danger" disabled={busy} onPress={confirmDelete} style={styles.half} />
+            </View>
+          </View>
+        )}
+
         <View style={styles.actions}>
           <Button label={action} icon={isVideo ? { sf: "play.fill", md: "play_arrow" } : { sf: "book.fill", md: "menu_book" }} variant="play" onPress={open} haptic />
           {watched !== null && watched > 0 && (
@@ -104,8 +188,46 @@ function MediaDetails({ media: initial, related }: { media: Media; related: Medi
             </View>
           )}
           <Text variant="caption" muted>
-            {formatBytes(media.sizeBytes)} · added {formatDate(media.addedAt)}
+            {formatViews(media.views)} · {formatBytes(media.sizeBytes)} · added {formatDate(media.addedAt)}
           </Text>
+        </View>
+
+        <View>
+          <View style={[styles.actionRow, { borderColor: colors.border }]}>
+            <ActionButton
+              label={media.favourite ? "Favourited" : "Favourite"}
+              icon={media.favourite ? { sf: "heart.fill", md: "favorite" } : { sf: "heart", md: "favorite_border" }}
+              active={media.favourite}
+              accessibilityLabel={media.favourite ? "Remove from favourites" : "Add to favourites"}
+              disabled={busy}
+              onPress={() => run(() => setFavourite(media.id, !media.favourite))}
+            />
+            {isVideo && (
+              <ActionButton
+                label="Tag"
+                icon={{ sf: "number", md: "tag" }}
+                accessibilityLabel="Add a tag"
+                onPress={() => {
+                  scroll.current?.scrollToEnd({ animated: true });
+                  tagInput.current?.focus();
+                }}
+              />
+            )}
+            {!media.inBin && (
+              <ActionButton
+                label="Move to bin"
+                icon={{ sf: "trash", md: "delete" }}
+                tone="danger"
+                disabled={busy}
+                onPress={() => run(() => moveToBin(media.id))}
+              />
+            )}
+          </View>
+          {actionError && (
+            <Text variant="caption" color={colors.danger} accessibilityLiveRegion="polite" style={styles.actionError}>
+              {actionError}
+            </Text>
+          )}
         </View>
 
         {media.series && (
@@ -153,7 +275,34 @@ function MediaDetails({ media: initial, related }: { media: Media; related: Medi
                 ))}
               </View>
             )}
-            <AddActor mediaId={media.id} onAdded={setMedia} />
+            <AddField placeholder="Add someone who's in it" label="Actor name" capitalize="words" submit={(name) => addActor(media.id, name)} onAdded={setMedia} />
+          </View>
+        )}
+
+        {isVideo && (
+          <View style={styles.section}>
+            <Text variant="title" accessibilityRole="header">
+              Tags
+            </Text>
+            {tags.length > 0 ? (
+              <View style={styles.chips}>
+                {tags.map((t) => (
+                  <TagChip key={t} name={t} onRemove={() => run(() => removeTag(media.id, t))} />
+                ))}
+              </View>
+            ) : (
+              <Text variant="caption" muted>
+                Words that say what this is, like “pov” or “vintage”. Search finds them, and each tag lists everything that has it.
+              </Text>
+            )}
+            <AddField
+              inputRef={tagInput}
+              placeholder="Add a tag"
+              label="Tag"
+              capitalize="none"
+              submit={(name) => addTag(media.id, name)}
+              onAdded={setMedia}
+            />
           </View>
         )}
       </View>
@@ -188,8 +337,17 @@ function describeKind(m: Media): string {
   return `${formatDuration(v.durationMs / 1000)} · ${formatResolution(v.width, v.height)} · ${v.codec}`;
 }
 
-// AddActor is a one-line form: type a name, submit, and the video comes back with it.
-function AddActor({ mediaId, onAdded }: { mediaId: string; onAdded: (m: Media) => void }) {
+type AddFieldProps = {
+  placeholder: string;
+  label: string;
+  capitalize: "none" | "words";
+  submit: (name: string) => Promise<Media>;
+  onAdded: (m: Media) => void;
+  inputRef?: React.RefObject<ComponentRef<typeof TextInput> | null>;
+};
+
+// AddField is a one-line form (an actor, a tag): type, submit, and the video comes back with it.
+function AddField({ placeholder, label, capitalize, submit: send, onAdded, inputRef }: AddFieldProps) {
   const { colors } = useAppTheme();
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -199,11 +357,12 @@ function AddActor({ mediaId, onAdded }: { mediaId: string; onAdded: (m: Media) =
     if (busy) return;
     setBusy(true);
     setError(null);
-    addActor(mediaId, name).then(
+    send(name).then(
       (m) => {
         onAdded(m);
         setName("");
         setBusy(false);
+        libraryChanged();
       },
       (err: unknown) => {
         // The server's message is written for people ("name must be non-empty"); show it.
@@ -217,16 +376,17 @@ function AddActor({ mediaId, onAdded }: { mediaId: string; onAdded: (m: Media) =
     <View style={styles.addActor}>
       <View style={styles.addRow}>
         <TextInput
+          ref={inputRef}
           value={name}
           onChangeText={setName}
           onSubmitEditing={submit}
-          placeholder="Add someone who's in it"
+          placeholder={placeholder}
           placeholderTextColor={colors.textMuted}
           keyboardAppearance="dark"
           returnKeyType="done"
-          autoCapitalize="words"
+          autoCapitalize={capitalize}
           autoCorrect={false}
-          accessibilityLabel="Actor name"
+          accessibilityLabel={label}
           style={[styles.input, { color: colors.text, backgroundColor: colors.surface }]}
         />
         <Button label="Add" onPress={submit} disabled={busy || name.trim() === ""} variant="secondary" />
@@ -274,5 +434,11 @@ const styles = StyleSheet.create({
   addRow: { flexDirection: "row", gap: space.sm },
   input: { ...typography.body, flex: 1, borderRadius: radius.md, paddingHorizontal: space.md, minHeight: touch.min },
   railCard: { width: 168 },
+  actionRow: { flexDirection: "row", borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth, paddingVertical: space.xs },
+  actionError: { marginTop: space.sm },
+  binBanner: { borderRadius: radius.lg, borderWidth: StyleSheet.hairlineWidth, padding: space.lg, gap: space.sm },
+  binTitle: { flexDirection: "row", alignItems: "center", gap: space.sm },
+  binButtons: { flexDirection: "row", gap: space.sm, marginTop: space.xs },
+  half: { flex: 1 },
   skeletonBody: { marginTop: space.lg },
 });

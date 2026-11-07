@@ -9,6 +9,10 @@ export default function HomeStack() {
     <Stack screenOptions={tabStackOptions}>
       <Stack.Screen name="index" options={{ headerShown: false, title: "Home" }} />
       <Stack.Screen name="comics" options={{ title: "Comics" }} />
+      <Stack.Screen name="me" options={{ title: "You" }} />
+      <Stack.Screen name="favourites" options={{ title: "Favourites" }} />
+      <Stack.Screen name="tags" options={{ title: "Tags" }} />
+      <Stack.Screen name="bin" options={{ title: "Bin" }} />
     </Stack>
   );
 }

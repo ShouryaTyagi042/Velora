@@ -123,10 +123,15 @@ type Media struct {
 	SizeBytes   int64      `json:"sizeBytes"`
 	ModTime     time.Time  `json:"modTime"`
 	AddedAt     time.Time  `json:"addedAt"`
-	Actors      []ActorTag `json:"actors,omitempty"`   // videos only
-	Comic       *ComicMeta `json:"comic,omitempty"`    // comics only
-	Video       *VideoMeta `json:"video,omitempty"`    // videos only, once extracted
-	Progress    *Progress  `json:"progress,omitempty"` // once started
+	Actors      []ActorTag `json:"actors,omitempty"`    // videos only
+	Comic       *ComicMeta `json:"comic,omitempty"`     // comics only
+	Video       *VideoMeta `json:"video,omitempty"`     // videos only, once extracted
+	Progress    *Progress  `json:"progress,omitempty"`  // once started
+	Tags        []string   `json:"tags,omitempty"`      // videos only, lowercase, by name
+	Favourite   bool       `json:"favourite,omitempty"` // the requesting user's favourite
+	Views       int        `json:"views"`               // times watched (videos) or read to the end (comics), by anyone
+	InBin       bool       `json:"inBin,omitempty"`     // moved to the bin: hidden everywhere but the bin
+	BinnedAt    *time.Time `json:"binnedAt,omitempty"`
 }
 
 // HasActor reports whether any of m's actors is called name.
@@ -144,4 +149,5 @@ var (
 	ErrNotFound    = errors.New("media: not found")
 	ErrNotVideo    = errors.New("media: actors apply to videos only")
 	ErrFolderActor = errors.New("media: folder actors change by renaming the folder")
+	ErrNotInBin    = errors.New("media: only items in the bin can be deleted")
 )

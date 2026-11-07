@@ -1,6 +1,9 @@
+import { useFocusEffect } from "expo-router";
+import { useCallback } from "react";
 import { ActivityIndicator, StyleSheet } from "react-native";
 
 import type { Media, Page } from "@/api/media";
+import { useRefetchOnLibraryChange } from "@/hooks/useLibraryChanges";
 import { usePages } from "@/hooks/usePages";
 import { useRescan } from "@/hooks/useRescan";
 import { openMedia } from "@/navigation/openMedia";
@@ -14,14 +17,23 @@ type Props = {
   fetchPage: (after: string | undefined, signal: AbortSignal) => Promise<Page<Media>>;
   empty: { title: string; detail?: string };
   header?: React.ReactElement;
+  // refreshOnFocus refetches every time the screen is shown (Favourites: hearts change elsewhere);
+  // otherwise only after a change made from this phone (useRefetchOnLibraryChange).
+  refreshOnFocus?: boolean;
 };
 
 const renderCard = (m: Media) => <MediaCard media={m} onPress={openMedia} layout="wide" />;
 
 // VideoList is a paged, single-column list of videos: one full-width card per row, the next page
 // loading as the end comes into view, pull down to rescan.
-export function VideoList({ fetchPage, empty, header }: Props) {
+export function VideoList({ fetchPage, empty, header, refreshOnFocus = false }: Props) {
   const { state, refreshing, refetch, loadMore, loadingMore, moreError } = usePages(fetchPage);
+  useRefetchOnLibraryChange(refetch);
+  useFocusEffect(
+    useCallback(() => {
+      if (refreshOnFocus) refetch();
+    }, [refreshOnFocus, refetch]),
+  );
   const { scanning, rescan } = useRescan(refetch);
   return (
     <GroupList
