@@ -16,7 +16,7 @@ Run the server (`../server`, `make run`) first.
 
 | Var | Example | Meaning |
 |---|---|---|
-| `EXPO_PUBLIC_API_URL` | `http://192.168.1.6:8080` | Base URL of velora-server, as seen **from the phone**. Never `localhost`: on the phone, that means the phone. |
+| `EXPO_PUBLIC_API_URL` | `http://192.168.1.10:8080` | Base URL of velora-server, as seen **from the phone**. Never `localhost`: on the phone, that means the phone. |
 
 `EXPO_PUBLIC_*` values are inlined into the JS bundle at build time and shipped to the device. Never put a secret behind that prefix. After editing `.env`, restart `npx expo start`.
 
